@@ -16,9 +16,11 @@ external_experts/
 │   └──pi3
 │   └──pi3x
 │   └──sam2
+│   └──wilddet3d
 │   └──vggt
 │   └──Wan2.1-VACE-1.3B
 ├── GroundingDINO/                  # Open-vocabulary object detection
+├── WildDet3D/                      # Promptable monocular 3D object detection
 ├── SAM2/                          # Image and video segmentation
 ├── Depth_AnythingV2/              # Depth estimation
 ├── Pi3/                           # 3D reconstruction (Pi3 & Pi3X)
@@ -30,7 +32,6 @@ external_experts/
 ├── Veo/                           # Google Veo video generation (API-based)
 ├── Sora/                          # OpenAI Sora video generation (API-based)
 ├── vace/                          # VACE local video generation (first-frame pipeline, server port 20034)
-├── WildDet3D/                     # Promptable 3D object detection (local or server port 20027)
 ├── FlowSeek/                      # Optical flow estimation between image pairs (local or server port 20036)
 ├── PaddleOCRVL/                   # Document OCR & structured recognition (PaddleOCR-VL-1.5, port 20037)
 ├── OneFormer/                     # Universal image segmentation semantic/instance/panoptic (port 20038)
@@ -44,6 +45,7 @@ external_experts/
 | **Depth AnythingV2** | `DepthEstimationTool` | Depth Estimation | Monocular depth estimation, analyze 3D depth relationships in images | Server (port 20019) | `image_path` |
 | **SAM2** | `SegmentationTool` | Image/Video Segmentation | High-precision segmentation tasks, precisely segment objects in images | Server (port 20020) | `image_path`, `point_coords`(optional), `point_labels`(optional), `box`(optional) |
 | **GroundingDINO** | `ObjectDetectionTool` | Open-vocabulary Object Detection | Detect arbitrary objects based on text descriptions | Server (port 20022) | `image_path`, `text_prompt`, `box_threshold`, `text_threshold` |
+| **WildDet3D** | `WildDet3DTool` | Promptable 3D Object Detection | Detect and localize objects in 3D from text, box, or point prompts | Server (port 20027) | `image_path`, `text_prompt`(optional), `boxes`(optional), `points`(optional), `score_threshold` |
 | **Moondream** | `MoondreamTool` | Vision Language Model | Image understanding and Q&A, answer natural language questions based on image content | Server (port 20024) | `image_path`, `task`, `object_name` |
 | **Molmo2** | `Molmo2Tool` | Multimodal Reasoning & Point Grounding | Run Molmo2 through a local service for image QA, captioning, and point grounding with optional annotated outputs | Server (port 20025) | `image_path`, `task`, `prompt`(optional), `save_annotated`(optional), `max_new_tokens`(optional) |
 | **Pi3** | `Pi3Tool` | 3D Reconstruction | Generate 3D point clouds and multi-view rendered images from images | Server (port 20030) | `image_path`, `azimuth_angle`, `elevation_angle` |
@@ -60,7 +62,6 @@ external_experts/
 | **Sora** | `SoraTool` | Video Generation | Text-to-video and image-to-video via OpenAI Sora | API (no server) | `prompt`, `image_path`(optional), `duration`, `resolution`, `aspect_ratio` |
 | **Orient Anything V2** | `OrientAnythingV2Tool` | Object Orientation & Rotation Estimation | Estimate absolute orientation (azimuth/elevation/rotation, symmetry_alpha) and relative pose between two views (NeurIPS 2025 Spotlight) | Server (port 20034) | `image_path`, `task`, `image_path2`(optional) |
 | **VACE** | `VaceTool` | Local Video Generation | Generate a short video from one reference image + text prompt via the local Wan2.1-VACE first-frame pipeline; returns `.mp4` path | Server (port 20034) | `image_path`, `prompt`, `base`(optional), `task`(optional), `mode`(optional) |
-| **WildDet3D** | `WildDet3DTool` | Promptable 3D Object Detection | Detect and localize objects in 2D and 3D from a single RGB image; supports text, box, and point prompts; requires `WILDDET3D_ROOT` and `WILDDET3D_CHECKPOINT` env vars | Local / Server (port 20027) | `image_path`, `prompt_text`(optional), `input_boxes`(optional), `input_points`(optional) |
 | **FlowSeek** | `FlowSeekTool` | Optical Flow Estimation | Estimate dense per-pixel motion between two images (consecutive frames or before/after pairs); returns colorized flow visualization; M variant (ViT-B) or T variant (ViT-S); source vendored in repo, requires `FLOWSEEK_CHECKPOINT` and `FLOWSEEK_DAV2_CHECKPOINT` env vars | Local / Server (port 20036) | `image1_path`, `image2_path`, `output_path`(optional) |
 | **PaddleOCR-VL-1.5** | `PaddleOCRVLTool` | Document OCR & Structured Recognition | 0.9B VLM for plain OCR, table parsing, chart reading, formula → LaTeX, text spotting, and seal recognition; supports local/server/mock; no checkpoint env var required | Local or Server (port 20037) | `image_path`, `task` ("ocr" / "table" / "chart" / "formula" / "spotting" / "seal") |
 | **OneFormer** | `OneFormerTool` | Universal Image Segmentation | Single model for semantic / instance / panoptic; HF auto-download; returns colorized overlay + mask_path id-map | Local / Server (port 20038) | `image_path`, `task` ("semantic" / "instance" / "panoptic") |
@@ -222,6 +223,57 @@ wget https://github.com/IDEA-Research/GroundingDINO/releases/download/v0.1.0-alp
 > unset ALL_PROXY HTTPS_PROXY HTTP_PROXY all_proxy https_proxy http_proxy
 > ```
 > Or install SOCKS support: `pip install httpx[socks]`
+
+---
+
+### 3b. WildDet3D - Promptable 3D Object Detection
+
+**Function**: Detect and localize objects in 3D from a single image using text, box, or point prompts.
+
+**Features**:
+- Open-vocabulary text-prompt 3D detection
+- Supports 2D box prompts and point prompts
+- Returns 2D boxes, 3D boxes, scores, class names, depth output, and visualization output
+
+**File Structure**:
+```
+WildDet3D/
+├── wilddet3d_server.py
+├── wilddet3d_client.py
+├── mock_wilddet3d_service.py
+└── __init__.py
+```
+
+**Weight Download**:
+```bash
+mkdir -p checkpoints/wilddet3d
+hf download allenai/WildDet3D wilddet3d_alldata_all_prompt_v1.0.pt \
+  --local-dir checkpoints/wilddet3d
+```
+
+**Start Server**:
+```bash
+python spagent/external_experts/WildDet3D/wilddet3d_server.py \
+  --checkpoint_path checkpoints/wilddet3d/wilddet3d_alldata_all_prompt_v1.0.pt \
+  --port 20027
+```
+
+**Python Usage**:
+```python
+from spagent.tools import WildDet3DTool
+
+tool = WildDet3DTool(use_mock=False, server_url="http://127.0.0.1:20027")
+result = tool.call(
+    image_path="assets/dog.jpeg",
+    text_prompt="dog",
+    score_threshold=0.3,
+)
+print(result["boxes_3d"], result["scores"], result["output_path"])
+```
+
+**Resources**:
+- [Official Repository](https://github.com/allenai/WildDet3D)
+- [Model Weights](https://huggingface.co/allenai/WildDet3D)
 
 ---
 
@@ -1202,101 +1254,6 @@ python test/test_tool.py --tool vace \
 
 ---
 
-### 14. WildDet3D - Promptable 3D Object Detection
-
-**Function**: Detect and localize objects in 2D and 3D from a single RGB image.
-
-**Features**:
-- Text, bounding box, and point prompts supported
-- Returns 2D boxes, 3D boxes, confidence scores, and an annotated image
-- Runs locally — no server process needed
-- Lazy model loading (loaded on first call, reused across agent turns)
-
-**Setup**:
-
-```bash
-# 1. Clone with submodules (sam3 and lingbot_depth are required submodules)
-git clone --recurse-submodules https://github.com/allenai/WildDet3D.git /your/path/WildDet3D
-
-# 2. Install WildDet3D dependencies (Python 3.11 required)
-pip install vis4d==1.0.0
-pip install git+https://github.com/SysCV/vis4d_cuda_ops.git --no-build-isolation --no-cache-dir
-pip install -r /your/path/WildDet3D/requirements.txt
-
-# 3. Download the model checkpoint (~4.7 GB)
-huggingface-cli download allenai/WildDet3D wilddet3d_alldata_all_prompt_v1.0.pt --local-dir /your/path/ckpt
-
-# 4. Set environment variables
-export WILDDET3D_ROOT=/your/path/WildDet3D
-export WILDDET3D_CHECKPOINT=/your/path/ckpt/wilddet3d_alldata_all_prompt_v1.0.pt
-```
-
-**Usage**:
-
-```python
-from spagent import SPAgent
-from spagent.models import GPTModel
-from spagent.tools import WildDet3DTool
-from spagent.core.prompts import GENERAL_VISION_SYSTEM_PROMPT
-
-model = GPTModel(model_name="gpt-4o")
-tools = [WildDet3DTool(device="cuda")]  # model loaded lazily on first call
-
-agent = SPAgent(model=model, tools=tools, system_prompt=GENERAL_VISION_SYSTEM_PROMPT)
-result = agent.solve_problem("image.jpg", "What objects are in this scene and where are they?")
-print(result["answer"])
-```
-
-**Parameters**:
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `image_path` | `str` | required | Path to input RGB image |
-| `prompt_text` | `str` | `"object"` | Text prompt (e.g. `"chair"`, `"car"`). Ignored when `input_boxes` or `input_points` are provided |
-| `input_boxes` | `list[float]` | `None` | 2D box prompt `[x1, y1, x2, y2]` in pixel coords. Takes priority over `prompt_text` |
-| `input_points` | `list[list]` | `None` | Point prompts `[[x, y, label], ...]` where `label=1` (foreground) or `0` (background) |
-
-**Returns**:
-
-```json
-{
-  "success": true,
-  "boxes2d": [[x1, y1, x2, y2], ...],
-  "boxes3d": [...],
-  "scores": [0.95, ...],
-  "num_detections": 1,
-  "output_path": "outputs/wilddet3d_image.png",
-  "description": "WildDet3D detected 1 object(s) matching 'chair'."
-}
-```
-
-
-**Usage (server mode)**:
-
-```bash
-python spagent/external_experts/WildDet3D/wilddet3d_server.py \
-    --checkpoint $WILDDET3D_CHECKPOINT --port 20027
-```
-
-```python
-tools = [WildDet3DTool(server_url="http://localhost:20027")]
-```
-
-**Test (server mode)**:
-
-```bash
-python test/test_tool.py --tool wilddet3d --image assets/dog.jpeg --prompt "dog" \
-    --server_url http://localhost:20027
-```
-
-**Note**: Use `GENERAL_VISION_SYSTEM_PROMPT` (not `SPATIAL_3D_SYSTEM_PROMPT`) with WildDet3D to avoid the LLM confusing its parameters with Pi3-style angle arguments.
-
-**Resources**:
-- [WildDet3D GitHub](https://github.com/allenai/WildDet3D)
-- [Model checkpoint on HuggingFace](https://huggingface.co/allenai/WildDet3D)
-
----
-
 ### 15. FlowSeek - Optical Flow Estimation
 
 **Function**: Estimate dense per-pixel motion between two images.
@@ -1564,7 +1521,7 @@ pip install ai2-molmo2 accelerate sentencepiece
 
 Create checkpoints directory:
 ```bash
-mkdir -p checkpoints/{grounding_dino,depth_anything,pi3,pi3x,sam2}
+mkdir -p checkpoints/{grounding_dino,depth_anything,pi3,pi3x,sam2,wilddet3d}
 ```
 
 ### 2. Download Model Weights
@@ -1593,6 +1550,11 @@ export HF_ENDPOINT=https://hf-mirror.com
 python spagent/external_experts/GroundingDINO/grounding_dino_server.py \
   --checkpoint_path checkpoints/grounding_dino/groundingdino_swinb_cogcoor.pth \
   --port 20022
+
+# WildDet3D promptable 3D object detection service
+python spagent/external_experts/WildDet3D/wilddet3d_server.py \
+  --checkpoint_path checkpoints/wilddet3d/wilddet3d_alldata_all_prompt_v1.0.pt \
+  --port 20027
 
 # 3D reconstruction service (Pi3)
 python spagent/external_experts/Pi3/pi3_server.py \

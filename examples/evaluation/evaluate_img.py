@@ -63,7 +63,7 @@ TOOL_CONFIGS = {
         VaceTool(use_mock=False, server_url=TOOL_SERVERS["vace"], mode='inference'),
     ],
     "wilddet3d": [
-        WildDet3DTool(device="cuda"),
+        WildDet3DTool(use_mock=False, server_url="http://127.0.0.1:20027"),
     ],
     "flowseek": [
         FlowSeekTool(device="cuda"),

@@ -68,6 +68,7 @@ class ToolCatalogEntry:
 DEFAULT_SERVER_URLS: Dict[str, str] = {
     "depth": "http://127.0.0.1:20019",
     "segmentation": "http://127.0.0.1:20020",
+    "wilddet3d": "http://127.0.0.1:20027",
     "detection": "http://127.0.0.1:20022",
     "moondream": "http://127.0.0.1:20024",
     "molmo2": "http://127.0.0.1:20025",
@@ -296,7 +297,7 @@ TOOL_CATALOG: List[ToolCatalogEntry] = [
         "wilddet3d",
         WildDet3DTool,
         "3d",
-        "wilddet3d_tool",
+        "wilddet3d_3d_detection_tool",
         {"server_url": DEFAULT_SERVER_URLS["wilddet3d"]},
         category="detection",
     ),
