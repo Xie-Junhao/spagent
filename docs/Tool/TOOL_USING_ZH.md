@@ -31,7 +31,8 @@ external_experts/
 ├── Sora/                          # OpenAI Sora 视频生成（API 直调，无需本地服务器）
 ├── vace/                          # VACE 本地视频生成（首帧驱动流水线，服务端口 20034）
 ├── PaddleOCRVL/                   # 文档 OCR 与结构化识别（PaddleOCR-VL-1.5，端口 20037）
-└── supervision/                   # YOLO目标检测和标注工具
+├── supervision/                   # YOLO目标检测和标注工具
+└── LingBotMap/                    # 长序列3D场景建图（服务端口 20038）
 ```
 
 ## 🛠️ 工具概览
@@ -56,6 +57,7 @@ external_experts/
 | **Orient Anything V2** | `OrientAnythingV2Tool` | 物体朝向与旋转估计 | 估计物体绝对朝向（方位角/仰角/旋转角/对称阶数）以及两视角间的相对位姿（NeurIPS 2025 Spotlight） | 本地服务器（20034） | `image_path`, `task`, `image_path2`(可选) |
 | **VACE** | `VaceTool` | 本地视频生成 | 基于单张参考图 + 文本提示词，通过本地 Wan2.1-VACE 首帧流水线生成短视频，返回 `.mp4` 路径 | 本地服务器（20034） | `image_path`, `prompt`, `base`(可选), `task`(可选), `mode`(可选) |
 | **PaddleOCR-VL-1.5** | `PaddleOCRVLTool` | 文档 OCR 与结构化识别 | 0.9B 视觉语言模型，支持纯文本 OCR、表格解析、图表读取、公式转 LaTeX、文本定位与印章识别；支持本地/服务器/mock 模式；无需额外 checkpoint 环境变量 | 本地或服务器（20037） | `image_path`, `task`（`"ocr"` / `"table"` / `"chart"` / `"formula"` / `"spotting"` / `"seal"`） |
+| **LingBot-Map** | `LingBotMapTool` | 长序列3D场景建图 | 从有序图片文件夹或图片列表构建交互式3D地图 | 本地服务器（20038） | `image_folder` 或 `image_paths`, `mask_sky`, `keyframe_interval`, `max_frames` |
 
 **使用示例**:
 - 详细使用示例请参考：[Advanced Examples](../Examples/ADVANCED_EXAMPLES.md)
@@ -1261,6 +1263,58 @@ print(result["answer"])
 **资源链接**：
 - [PaddleOCR-VL-1.5（HuggingFace）](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.5)
 - [论文](https://arxiv.org/abs/2505.09816)
+
+---
+
+### 15. LingBot-Map - 长序列3D场景建图
+
+**功能**：使用 LingBot-Map 从有序图片序列构建交互式3D场景地图。
+
+**特点**：
+- 支持图片文件夹和显式图片路径列表
+- 通过本地服务启动 LingBot-Map viewer 工作流
+- 返回 viewer URL、日志路径以及可收集到的输出文件
+- 支持 sky masking 和 keyframe 采样
+
+**权重下载**：
+```bash
+mkdir -p checkpoints/lingbot_map
+hf download robbyant/lingbot-map lingbot-map-long.pt \
+  --local-dir checkpoints/lingbot_map
+```
+
+**安装依赖**：
+```bash
+cd third_party/lingbot-map
+pip install -e ".[vis]"
+pip install flask
+```
+
+**启动服务**：
+```bash
+python spagent/external_experts/LingBotMap/lingbot_map_server.py \
+  --repo_path third_party/lingbot-map \
+  --model_path checkpoints/lingbot_map/lingbot-map-long.pt \
+  --port 20038
+```
+
+**Python 调用示例**：
+```python
+from spagent.tools import LingBotMapTool
+
+tool = LingBotMapTool(use_mock=False, server_url="http://127.0.0.1:20038")
+result = tool.call(
+    image_folder="example/courthouse",
+    mask_sky=True,
+    keyframe_interval=1,
+    max_frames=128,
+)
+print(result["viewer_url"])
+```
+
+**资源链接**：
+- [官方仓库](https://github.com/Robbyant/lingbot-map)
+- [HuggingFace 权重](https://huggingface.co/robbyant/lingbot-map)
 
 ---
 
