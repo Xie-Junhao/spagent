@@ -64,6 +64,7 @@ external_experts/
 | **FlowSeek** | `FlowSeekTool` | Optical Flow Estimation | Estimate dense per-pixel motion between two images (consecutive frames or before/after pairs); returns colorized flow visualization; M variant (ViT-B) or T variant (ViT-S); source vendored in repo, requires `FLOWSEEK_CHECKPOINT` and `FLOWSEEK_DAV2_CHECKPOINT` env vars | Local / Server (port 20036) | `image1_path`, `image2_path`, `output_path`(optional) |
 | **PaddleOCR-VL-1.5** | `PaddleOCRVLTool` | Document OCR & Structured Recognition | 0.9B VLM for plain OCR, table parsing, chart reading, formula → LaTeX, text spotting, and seal recognition; supports local/server/mock; no checkpoint env var required | Local or Server (port 20037) | `image_path`, `task` ("ocr" / "table" / "chart" / "formula" / "spotting" / "seal") |
 | **OneFormer** | `OneFormerTool` | Universal Image Segmentation | Single model for semantic / instance / panoptic; HF auto-download; returns colorized overlay + mask_path id-map | Local / Server (port 20038) | `image_path`, `task` ("semantic" / "instance" / "panoptic") |
+| **Crop** | `CropTool` | Image Cropping | Extract regions of interest from images using boxes, masks, or polygons | Local | `image_path`, `box`/`boxes`/`mask_path`/`polygon`, `padding`, `relative_coords` |
 
 **Usage Examples**:
 - For detailed usage examples, please refer to: [Advanced Examples](../Examples/ADVANCED_EXAMPLES.md)
@@ -1546,6 +1547,39 @@ python test/test_tool.py --tool oneformer --image assets/dog.jpeg --seg_task pan
 
 **Resources**:
 - [OneFormer GitHub](https://github.com/SHI-Labs/OneFormer)
+
+---
+
+### 18. Crop - Image Region Cropping
+
+**Function**: Extract regions of interest from images using boxes, masks, or polygons.
+
+**Features**:
+- Supports single box crop and multi-box batch crop
+- Supports mask crop and polygon crop with transparent PNG output
+- Supports pixel coordinates and relative coordinates
+
+**Python Usage**:
+```python
+from spagent.tools import CropTool
+
+tool = CropTool()
+result = tool.call(
+    image_path="assets/dog.jpeg",
+    box=[40, 30, 260, 220],
+    padding=8,
+)
+print(result["output_path"], result["crop_size"])
+```
+
+**Multi-box Usage**:
+```python
+result = tool.call(
+    image_path="assets/dog.jpeg",
+    boxes=[[40, 30, 160, 180], [170, 40, 280, 210]],
+)
+print(result["output_paths"])
+```
 
 ---
 
