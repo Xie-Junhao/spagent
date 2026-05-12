@@ -35,7 +35,8 @@ external_experts/
 ├── PaddleOCRVL/                   # Document OCR & structured recognition (PaddleOCR-VL-1.5, port 20037)
 ├── OneFormer/                     # Universal image segmentation semantic/instance/panoptic (port 20038)
 ├── supervision/                   # YOLO object detection and annotation tools
-└── QwenImageEdit/                 # Qwen instruction-based image editing (DashScope API)
+├── QwenImageEdit/                 # Qwen instruction-based image editing (DashScope API)
+└── LingBotMap/                    # Long-sequence 3D scene mapping (server port 20040)
 ```
 
 ## 🛠️ Tool Overview
@@ -66,6 +67,7 @@ external_experts/
 | **PaddleOCR-VL-1.5** | `PaddleOCRVLTool` | Document OCR & Structured Recognition | 0.9B VLM for plain OCR, table parsing, chart reading, formula → LaTeX, text spotting, and seal recognition; supports local/server/mock; no checkpoint env var required | Local or Server (port 20037) | `image_path`, `task` ("ocr" / "table" / "chart" / "formula" / "spotting" / "seal") |
 | **OneFormer** | `OneFormerTool` | Universal Image Segmentation | Single model for semantic / instance / panoptic; HF auto-download; returns colorized overlay + mask_path id-map | Local / Server (port 20038) | `image_path`, `task` ("semantic" / "instance" / "panoptic") |
 | **Qwen Image Edit** | `QwenImageEditTool` | Instruction-based Image Editing | Edit a base image, replace or add content, change style or text, and fuse up to two reference images | DashScope API (no server) | `image_path`, `prompt`, `reference_image_paths`(optional), `size`(optional), `n`(optional), `seed`(optional) |
+| **LingBot-Map** | `LingBotMapTool` | Long-sequence 3D Scene Mapping | Build an interactive 3D map from an ordered image folder or image list | Server (port 20040) | `image_folder` or `image_paths`, `mask_sky`, `keyframe_interval`, `max_frames` |
 
 **Usage Examples**:
 - For detailed usage examples, please refer to: [Advanced Examples](../Examples/ADVANCED_EXAMPLES.md)
@@ -1594,6 +1596,55 @@ The default model is `qwen-image-2.0`. `image_path` and reference images may be 
 **Resources**:
 - [Qwen-Image GitHub](https://github.com/QwenLM/Qwen-Image)
 - [Qwen Image Edit API](https://help.aliyun.com/en/model-studio/qwen-image-edit-api)
+### 19. LingBot-Map - Long-sequence 3D Scene Mapping
+
+**Function**: Build an interactive 3D scene map from an ordered image sequence using LingBot-Map.
+
+**Features**:
+- Supports image folders and explicit image path lists
+- Starts the LingBot-Map viewer workflow through a local server
+- Returns viewer URL, logs, and collected output files when available
+- Supports sky masking and keyframe sampling
+
+**Weight Download**:
+```bash
+mkdir -p checkpoints/lingbot_map
+hf download robbyant/lingbot-map lingbot-map-long.pt \
+  --local-dir checkpoints/lingbot_map
+```
+
+**Install**:
+```bash
+cd third_party/lingbot-map
+pip install -e ".[vis]"
+pip install flask
+```
+
+**Start Server**:
+```bash
+python spagent/external_experts/LingBotMap/lingbot_map_server.py \
+  --repo_path third_party/lingbot-map \
+  --model_path checkpoints/lingbot_map/lingbot-map-long.pt \
+  --port 20040
+```
+
+**Python Usage**:
+```python
+from spagent.tools import LingBotMapTool
+
+tool = LingBotMapTool(use_mock=False, server_url="http://127.0.0.1:20040")
+result = tool.call(
+    image_folder="example/courthouse",
+    mask_sky=True,
+    keyframe_interval=1,
+    max_frames=128,
+)
+print(result["viewer_url"])
+```
+
+**Resources**:
+- [Official Repository](https://github.com/Robbyant/lingbot-map)
+- [HuggingFace Checkpoints](https://huggingface.co/robbyant/lingbot-map)
 
 ---
 
