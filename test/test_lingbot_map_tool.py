@@ -16,13 +16,13 @@ from spagent.tools import LingBotMapTool
 from core.tool_result import ToolResult, validate_payload
 
 
-def _make_frames(tmp_path: Path, count: int = 4) -> list[str]:
+def _make_frames(tmp_path: Path, count: int = 8) -> list[str]:
     frame_dir = tmp_path / "frames"
     frame_dir.mkdir()
     paths = []
     for idx in range(count):
         path = frame_dir / f"{idx:06d}.png"
-        image = Image.new("RGB", (96, 72), (40 + idx * 30, 90, 160))
+        image = Image.new("RGB", (96, 72), ((40 + idx * 30) % 256, 90, 160))
         image.save(path)
         paths.append(str(path))
     return paths
@@ -49,7 +49,7 @@ def test_mock_image_folder_mapping(tmp_path):
     assert result["success"] is True
     assert isinstance(result, ToolResult)
     assert validate_payload(result, "3d_reconstruction")[0]
-    assert result["num_frames"] == 4
+    assert result["num_frames"] == 8
     assert Path(result["preview_path"]).exists()
     assert Path(result["trajectory_path"]).exists()
     assert Path(result["point_cloud_path"]).exists()
@@ -57,13 +57,13 @@ def test_mock_image_folder_mapping(tmp_path):
 
 
 def test_mock_image_paths_mapping_with_frame_limits(tmp_path):
-    frames = _make_frames(tmp_path, count=6)
+    frames = _make_frames(tmp_path, count=16)
     tool = LingBotMapTool(use_mock=True, output_dir=str(tmp_path / "out"))
 
-    result = tool.call(image_paths=frames, keyframe_interval=2, max_frames=2)
+    result = tool.call(image_paths=frames, keyframe_interval=2, max_frames=8)
 
     assert result["success"] is True
-    assert result["num_frames"] == 2
+    assert result["num_frames"] == 8
     assert Path(result["preview_path"]).exists()
 
 
@@ -114,7 +114,7 @@ out.mkdir(parents=True, exist_ok=True)
     )
     model_path = tmp_path / "lingbot-map-long.pt"
     model_path.write_text("fake checkpoint", encoding="utf-8")
-    frames = _make_frames(tmp_path, count=2)
+    frames = _make_frames(tmp_path, count=8)
 
     server.configure(repo_path=str(repo), model_path=str(model_path), python_bin=sys.executable)
     frame_dir = tmp_path / "server_frames"
@@ -138,7 +138,7 @@ out.mkdir(parents=True, exist_ok=True)
 def test_client_saves_server_outputs(tmp_path, monkeypatch):
     from spagent.external_experts.LingBotMap.lingbot_map_client import LingBotMapClient
 
-    frames = _make_frames(tmp_path, count=1)
+    frames = _make_frames(tmp_path, count=8)
     preview = base64.b64encode(Path(frames[0]).read_bytes()).decode("utf-8")
     ply = base64.b64encode(b"ply\nformat ascii 1.0\nelement vertex 0\nend_header\n").decode("utf-8")
 
@@ -189,15 +189,21 @@ out.mkdir(parents=True, exist_ok=True)
     )
     model_path = tmp_path / "lingbot-map-long.pt"
     model_path.write_text("fake checkpoint", encoding="utf-8")
-    frames = _make_frames(tmp_path, count=1)
-    encoded = base64.b64encode(Path(frames[0]).read_bytes()).decode("utf-8")
+    frames = _make_frames(tmp_path, count=8)
+    images = [
+        {
+            "filename": Path(frame).name,
+            "data": base64.b64encode(Path(frame).read_bytes()).decode("utf-8"),
+        }
+        for frame in frames
+    ]
 
     server.configure(repo_path=str(repo), model_path=str(model_path), python_bin=sys.executable)
     client = server.app.test_client()
     response = client.post(
         "/infer",
         json={
-            "images": [{"filename": "frame.png", "data": encoded}],
+            "images": images,
             "wait_for_completion": True,
             "output_dir": str(tmp_path / "http_out"),
         },
@@ -206,7 +212,7 @@ out.mkdir(parents=True, exist_ok=True)
     assert response.status_code == 200
     data = response.get_json()
     assert data["success"] is True
-    assert data["num_frames"] == 1
+    assert data["num_frames"] == 8
     assert "trajectory_json" in data
     assert "point_cloud" in data
 
@@ -216,7 +222,7 @@ out.mkdir(parents=True, exist_ok=True)
     reason="Set LINGBOT_MAP_REAL_TEST=1 to run against a live LingBot-Map server.",
 )
 def test_real_lingbot_map_server_smoke(tmp_path):
-    frames = _make_frames(tmp_path, count=3)
+    frames = _make_frames(tmp_path, count=8)
     server_url = os.environ.get("LINGBOT_MAP_SERVER_URL", "http://127.0.0.1:20038")
     tool = LingBotMapTool(use_mock=False, server_url=server_url, output_dir=str(tmp_path / "out"))
 
