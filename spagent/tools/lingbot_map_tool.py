@@ -17,6 +17,7 @@ from core.tool_result import RECONSTRUCTION_3D, PointCloudPayload, ToolResult
 logger = logging.getLogger(__name__)
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+MIN_REAL_FRAMES = 8
 
 
 class LingBotMapTool(Tool):
@@ -82,7 +83,7 @@ class LingBotMapTool(Tool):
                     "type": "integer",
                     "description": "Maximum number of frames to send to the backend.",
                     "default": 128,
-                    "minimum": 1,
+                    "minimum": 8,
                 },
                 "output_dir": {
                     "type": "string",
@@ -181,8 +182,8 @@ class LingBotMapTool(Tool):
         try:
             if int(keyframe_interval) < 1:
                 return False, "keyframe_interval must be >= 1.", None
-            if int(max_frames) < 1:
-                return False, "max_frames must be >= 1.", None
+            if int(max_frames) < MIN_REAL_FRAMES:
+                return False, f"max_frames must be >= {MIN_REAL_FRAMES} for LingBot-Map.", None
         except (TypeError, ValueError):
             return False, "keyframe_interval and max_frames must be integers.", None
 
@@ -190,8 +191,12 @@ class LingBotMapTool(Tool):
             folder = Path(image_folder)
             if not folder.exists() or not folder.is_dir():
                 return False, f"Image folder not found: {image_folder}", None
-            if not [p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS]:
+            frames = [p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS]
+            if not frames:
                 return False, f"No supported image files found in: {image_folder}", None
+            sampled_count = len(frames[:: int(keyframe_interval)][: int(max_frames)])
+            if sampled_count < MIN_REAL_FRAMES:
+                return False, f"LingBot-Map requires at least {MIN_REAL_FRAMES} sampled frames.", None
             return True, None, None
 
         if not isinstance(image_paths, list) or len(image_paths) == 0:
@@ -204,4 +209,7 @@ class LingBotMapTool(Tool):
             if path.suffix.lower() not in IMAGE_EXTENSIONS:
                 return False, f"Unsupported image file extension: {image_path}", None
             normalized_paths.append(str(path))
+        sampled_count = len(normalized_paths[:: int(keyframe_interval)][: int(max_frames)])
+        if sampled_count < MIN_REAL_FRAMES:
+            return False, f"LingBot-Map requires at least {MIN_REAL_FRAMES} sampled frames.", None
         return True, None, normalized_paths

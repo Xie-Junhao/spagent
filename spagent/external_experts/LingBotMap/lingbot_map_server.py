@@ -25,6 +25,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+MIN_REAL_FRAMES = 8
 
 
 class _MissingFlaskApp:
@@ -49,6 +50,8 @@ def configure(
     viewer_host: str = "127.0.0.1",
     viewer_port: int = 8080,
     work_dir: Optional[str] = None,
+    use_sdpa: bool = True,
+    camera_num_iterations: int = 1,
 ) -> None:
     global config
     config = {
@@ -58,6 +61,8 @@ def configure(
         "viewer_host": viewer_host,
         "viewer_port": int(viewer_port),
         "work_dir": work_dir or str(Path(tempfile.gettempdir()) / "spagent_lingbot_map_server"),
+        "use_sdpa": bool(use_sdpa),
+        "camera_num_iterations": max(1, int(camera_num_iterations)),
     }
     Path(config["work_dir"]).mkdir(parents=True, exist_ok=True)
 
@@ -75,6 +80,8 @@ def health_check():
             "model_path": str(model_path),
             "model_exists": model_path.exists(),
             "viewer_url": _viewer_url(),
+            "use_sdpa": config.get("use_sdpa", True),
+            "camera_num_iterations": config.get("camera_num_iterations", 1),
         }
     )
 
@@ -102,13 +109,18 @@ def infer():
             keyframe_interval=keyframe_interval,
             max_frames=max_frames,
         )
+        num_frames = len(_list_images(frame_dir))
+        if num_frames < MIN_REAL_FRAMES:
+            return jsonify({"success": False, "error": f"LingBot-Map requires at least {MIN_REAL_FRAMES} sampled frames"}), 400
         result = _run_lingbot_map(
             frame_dir=frame_dir,
             output_dir=output_dir,
             mask_sky=mask_sky,
+            keyframe_interval=keyframe_interval,
+            max_frames=max_frames,
             wait_for_completion=wait_for_completion,
         )
-        result["num_frames"] = len(_list_images(frame_dir))
+        result["num_frames"] = num_frames
         return jsonify(result)
     except Exception as e:
         logger.error("LingBot-Map inference failed: %s", e)
@@ -147,7 +159,14 @@ def _prepare_frame_dir(
     return frame_dir
 
 
-def _run_lingbot_map(frame_dir: Path, output_dir: Path, mask_sky: bool, wait_for_completion: bool) -> Dict[str, Any]:
+def _run_lingbot_map(
+    frame_dir: Path,
+    output_dir: Path,
+    mask_sky: bool,
+    keyframe_interval: int = 1,
+    max_frames: int = 128,
+    wait_for_completion: bool = False,
+) -> Dict[str, Any]:
     repo = Path(config["repo_path"])
     script = repo / "demo.py"
     if not script.exists():
@@ -164,7 +183,15 @@ def _run_lingbot_map(frame_dir: Path, output_dir: Path, mask_sky: bool, wait_for
         str(model_path),
         "--image_folder",
         str(frame_dir),
+        "--port",
+        str(config.get("viewer_port", 8080)),
+        "--keyframe_interval",
+        str(max(1, int(keyframe_interval))),
+        "--camera_num_iterations",
+        str(max(1, int(config.get("camera_num_iterations", 1)))),
     ]
+    if config.get("use_sdpa", True):
+        command.append("--use_sdpa")
     if mask_sky:
         command.append("--mask_sky")
 
@@ -273,6 +300,9 @@ if __name__ == "__main__":
     parser.add_argument("--viewer_host", type=str, default="127.0.0.1", help="Host shown in returned viewer URL")
     parser.add_argument("--viewer_port", type=int, default=8080, help="Viser viewer port used by LingBot-Map demo.py")
     parser.add_argument("--work_dir", type=str, default=None, help="Directory for server-side run outputs")
+    parser.add_argument("--camera_num_iterations", type=int, default=1, help="Camera optimization iterations for demo.py")
+    parser.add_argument("--use_sdpa", action="store_true", default=True, help="Use PyTorch SDPA backend for demo.py")
+    parser.add_argument("--no_use_sdpa", action="store_false", dest="use_sdpa", help="Use FlashInfer backend for demo.py")
     args = parser.parse_args()
 
     configure(
@@ -282,5 +312,7 @@ if __name__ == "__main__":
         viewer_host=args.viewer_host,
         viewer_port=args.viewer_port,
         work_dir=args.work_dir,
+        use_sdpa=args.use_sdpa,
+        camera_num_iterations=args.camera_num_iterations,
     )
     app.run(host="0.0.0.0", port=args.port, debug=False)
