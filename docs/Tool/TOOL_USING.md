@@ -20,7 +20,6 @@ external_experts/
 │   └──vggt
 │   └──Wan2.1-VACE-1.3B
 ├── GroundingDINO/                  # Open-vocabulary object detection
-├── WildDet3D/                      # Promptable monocular 3D object detection
 ├── SAM2/                          # Image and video segmentation
 ├── Depth_AnythingV2/              # Depth estimation
 ├── Pi3/                           # 3D reconstruction (Pi3 & Pi3X)
@@ -35,7 +34,8 @@ external_experts/
 ├── FlowSeek/                      # Optical flow estimation between image pairs (local or server port 20036)
 ├── PaddleOCRVL/                   # Document OCR & structured recognition (PaddleOCR-VL-1.5, port 20037)
 ├── OneFormer/                     # Universal image segmentation semantic/instance/panoptic (port 20038)
-└── supervision/                   # YOLO object detection and annotation tools
+├── supervision/                   # YOLO object detection and annotation tools
+└── WildDet3D/                     # Promptable monocular 3D object detection (server port 20027)
 ```
 
 ## 🛠️ Tool Overview
@@ -45,7 +45,6 @@ external_experts/
 | **Depth AnythingV2** | `DepthEstimationTool` | Depth Estimation | Monocular depth estimation, analyze 3D depth relationships in images | Server (port 20019) | `image_path` |
 | **SAM2** | `SegmentationTool` | Image/Video Segmentation | High-precision segmentation tasks, precisely segment objects in images | Server (port 20020) | `image_path`, `point_coords`(optional), `point_labels`(optional), `box`(optional) |
 | **GroundingDINO** | `ObjectDetectionTool` | Open-vocabulary Object Detection | Detect arbitrary objects based on text descriptions | Server (port 20022) | `image_path`, `text_prompt`, `box_threshold`, `text_threshold` |
-| **WildDet3D** | `WildDet3DTool` | Promptable 3D Object Detection | Detect and localize objects in 3D from text, box, or point prompts | Server (port 20027) | `image_path`, `text_prompt`(optional), `boxes`(optional), `points`(optional), `score_threshold` |
 | **Moondream** | `MoondreamTool` | Vision Language Model | Image understanding and Q&A, answer natural language questions based on image content | Server (port 20024) | `image_path`, `task`, `object_name` |
 | **Molmo2** | `Molmo2Tool` | Multimodal Reasoning & Point Grounding | Run Molmo2 through a local service for image QA, captioning, and point grounding with optional annotated outputs | Server (port 20025) | `image_path`, `task`, `prompt`(optional), `save_annotated`(optional), `max_new_tokens`(optional) |
 | **Pi3** | `Pi3Tool` | 3D Reconstruction | Generate 3D point clouds and multi-view rendered images from images | Server (port 20030) | `image_path`, `azimuth_angle`, `elevation_angle` |
@@ -65,6 +64,7 @@ external_experts/
 | **FlowSeek** | `FlowSeekTool` | Optical Flow Estimation | Estimate dense per-pixel motion between two images (consecutive frames or before/after pairs); returns colorized flow visualization; M variant (ViT-B) or T variant (ViT-S); source vendored in repo, requires `FLOWSEEK_CHECKPOINT` and `FLOWSEEK_DAV2_CHECKPOINT` env vars | Local / Server (port 20036) | `image1_path`, `image2_path`, `output_path`(optional) |
 | **PaddleOCR-VL-1.5** | `PaddleOCRVLTool` | Document OCR & Structured Recognition | 0.9B VLM for plain OCR, table parsing, chart reading, formula → LaTeX, text spotting, and seal recognition; supports local/server/mock; no checkpoint env var required | Local or Server (port 20037) | `image_path`, `task` ("ocr" / "table" / "chart" / "formula" / "spotting" / "seal") |
 | **OneFormer** | `OneFormerTool` | Universal Image Segmentation | Single model for semantic / instance / panoptic; HF auto-download; returns colorized overlay + mask_path id-map | Local / Server (port 20038) | `image_path`, `task` ("semantic" / "instance" / "panoptic") |
+| **WildDet3D** | `WildDet3DTool` | Promptable 3D Object Detection | Detect and localize objects in 3D from text, box, or point prompts | Server (port 20027) | `image_path`, `text_prompt`(optional), `boxes`(optional), `points`(optional), `score_threshold` |
 
 **Usage Examples**:
 - For detailed usage examples, please refer to: [Advanced Examples](../Examples/ADVANCED_EXAMPLES.md)
@@ -223,58 +223,6 @@ wget https://github.com/IDEA-Research/GroundingDINO/releases/download/v0.1.0-alp
 > unset ALL_PROXY HTTPS_PROXY HTTP_PROXY all_proxy https_proxy http_proxy
 > ```
 > Or install SOCKS support: `pip install httpx[socks]`
-
----
-
-### 3b. WildDet3D - Promptable 3D Object Detection
-
-**Function**: Detect and localize objects in 3D from a single image using text, box, or point prompts.
-
-**Features**:
-- Open-vocabulary text-prompt 3D detection
-- Supports 2D box prompts and point prompts
-- Returns 2D boxes, 3D boxes, scores, class names, depth output, and visualization output
-
-**File Structure**:
-```
-WildDet3D/
-├── wilddet3d_server.py
-├── wilddet3d_client.py
-├── mock_wilddet3d_service.py
-└── __init__.py
-```
-
-**Weight Download**:
-```bash
-pip install flask
-mkdir -p checkpoints/wilddet3d
-hf download allenai/WildDet3D wilddet3d_alldata_all_prompt_v1.0.pt \
-  --local-dir checkpoints/wilddet3d
-```
-
-**Start Server**:
-```bash
-python spagent/external_experts/WildDet3D/wilddet3d_server.py \
-  --checkpoint_path checkpoints/wilddet3d/wilddet3d_alldata_all_prompt_v1.0.pt \
-  --port 20027
-```
-
-**Python Usage**:
-```python
-from spagent.tools import WildDet3DTool
-
-tool = WildDet3DTool(use_mock=False, server_url="http://127.0.0.1:20027")
-result = tool.call(
-    image_path="assets/dog.jpeg",
-    text_prompt="dog",
-    score_threshold=0.3,
-)
-print(result["boxes_3d"], result["scores"], result["output_path"])
-```
-
-**Resources**:
-- [Official Repository](https://github.com/allenai/WildDet3D)
-- [Model Weights](https://huggingface.co/allenai/WildDet3D)
 
 ---
 
@@ -1504,6 +1452,58 @@ python test/test_tool.py --tool oneformer --image assets/dog.jpeg --seg_task pan
 
 **Resources**:
 - [OneFormer GitHub](https://github.com/SHI-Labs/OneFormer)
+
+---
+
+### 18. WildDet3D - Promptable 3D Object Detection
+
+**Function**: Detect and localize objects in 3D from a single image using text, box, or point prompts.
+
+**Features**:
+- Open-vocabulary text-prompt 3D detection
+- Supports 2D box prompts and point prompts
+- Returns 2D boxes, 3D boxes, scores, class names, depth output, and visualization output
+
+**File Structure**:
+```
+WildDet3D/
+├── wilddet3d_server.py
+├── wilddet3d_client.py
+├── mock_wilddet3d_service.py
+└── __init__.py
+```
+
+**Weight Download**:
+```bash
+pip install flask
+mkdir -p checkpoints/wilddet3d
+hf download allenai/WildDet3D wilddet3d_alldata_all_prompt_v1.0.pt \
+  --local-dir checkpoints/wilddet3d
+```
+
+**Start Server**:
+```bash
+python spagent/external_experts/WildDet3D/wilddet3d_server.py \
+  --checkpoint_path checkpoints/wilddet3d/wilddet3d_alldata_all_prompt_v1.0.pt \
+  --port 20027
+```
+
+**Python Usage**:
+```python
+from spagent.tools import WildDet3DTool
+
+tool = WildDet3DTool(use_mock=False, server_url="http://127.0.0.1:20027")
+result = tool.call(
+    image_path="assets/dog.jpeg",
+    text_prompt="dog",
+    score_threshold=0.3,
+)
+print(result["boxes_3d"], result["scores"], result["output_path"])
+```
+
+**Resources**:
+- [Official Repository](https://github.com/allenai/WildDet3D)
+- [Model Weights](https://huggingface.co/allenai/WildDet3D)
 
 ---
 
