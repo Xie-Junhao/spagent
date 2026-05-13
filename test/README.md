@@ -39,14 +39,14 @@ python test/test_tool.py --tool pi3x --image assets/dog.jpeg --azimuth 45 --elev
 # Test GroundingDINO tool directly
 python test/test_tool.py --tool grounding_dino --image assets/dog.jpeg --text_prompt "dog"
 
-# Test WildDet3D mock tests
-python -m pytest -q test/test_wilddet3d_tool.py
-
 # Test SAM2 tool directly
 python test/test_tool.py --tool sam --image assets/dog.jpeg
 
 # Test Qwen Image Edit without an API key
 pytest -q test/test_qwen_image_edit_tool.py
+
+# Test WildDet3D mock tests
+python -m pytest -q test/test_wilddet3d_tool.py
 ```
 
 ---
