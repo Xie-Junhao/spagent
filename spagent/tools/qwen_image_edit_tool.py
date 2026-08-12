@@ -177,11 +177,31 @@ class QwenImageEditTool(Tool):
             image_paths = result.get("image_paths") or (
                 [output_path] if output_path else []
             )
-            if not output_path or not image_paths:
+            if (
+                not isinstance(output_path, str)
+                or not output_path
+                or not isinstance(image_paths, (list, tuple))
+                or not image_paths
+            ):
                 return ToolResult(
                     success=False,
                     error="Qwen Image Edit returned no local output image.",
                     description="Qwen Image Edit returned no local output image.",
+                )
+            image_paths = list(image_paths)
+            invalid_outputs = [
+                path
+                for path in image_paths
+                if not isinstance(path, str) or not Path(path).is_file()
+            ]
+            if not Path(output_path).is_file() or invalid_outputs:
+                error_msg = (
+                    "Qwen Image Edit returned an unavailable local output image."
+                )
+                return ToolResult(
+                    success=False,
+                    error=error_msg,
+                    description=error_msg,
                 )
 
             payload = MediaPayload(

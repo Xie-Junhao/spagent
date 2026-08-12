@@ -13,6 +13,7 @@ from PIL import Image
 
 from spagent.tools import QwenImageEditTool
 from spagent.tools.catalog import build_tools, resolve_tool_keys
+from spagent.core.prompts import build_tool_selection_guide
 from core.render import render
 from core.tool_result import ToolResult, validate_payload
 
@@ -149,6 +150,98 @@ def test_catalog_builds_tool_and_resolves_function_name():
     assert [tool.name for tool in tools] == ["qwen_image_edit_tool"]
 
 
+def test_agent_selects_generation_workflow_and_tool_guide():
+    from spagent import SPAgent
+
+    class MockModel:
+        model_name = "mock"
+
+    tool = QwenImageEditTool(use_mock=True)
+    agent = SPAgent(model=MockModel(), tools=[tool], workflow_mode="auto")
+    assert (
+        agent._select_workflow("Edit this image and replace the background.", ["a.png"])
+        == "generation"
+    )
+    assert agent._select_workflow("请编辑图像并更换背景。", ["a.png"]) == "generation"
+    guide = build_tool_selection_guide({tool.name})
+    assert tool.name in guide
+    assert "what to preserve" in guide
+
+
+def test_spagent_executes_image_edit_end_to_end(source_images, tmp_path):
+    from spagent import SPAgent
+    from spagent.core.model import Model
+
+    class ScriptedModel(Model):
+        def __init__(self, responses):
+            super().__init__(model_name="scripted")
+            self.responses = list(responses)
+            self.seen_image_counts = []
+
+        def _next(self, image_count):
+            self.seen_image_counts.append(image_count)
+            return self.responses.pop(0)
+
+        def single_image_inference(self, image_path, prompt, **kwargs):
+            del image_path, prompt, kwargs
+            return self._next(1)
+
+        def multiple_images_inference(self, image_paths, prompt, **kwargs):
+            del prompt, kwargs
+            return self._next(len(image_paths))
+
+        def text_only_inference(self, prompt, **kwargs):
+            del prompt, kwargs
+            return self._next(0)
+
+    arguments = {
+        "image_path": source_images[0],
+        "prompt": "Replace the background with a clean blue studio wall.",
+        "seed": 7,
+    }
+    tool_call = (
+        "<tool_call>"
+        + json.dumps({"name": "qwen_image_edit_tool", "arguments": arguments})
+        + "</tool_call>"
+    )
+    model = ScriptedModel([tool_call, "<answer>Edited image created.</answer>"])
+    tool = QwenImageEditTool(use_mock=True, output_dir=str(tmp_path / "agent_outputs"))
+    agent = SPAgent(model=model, tools=[tool], workflow_mode="auto")
+
+    result = agent.step(
+        content="Edit this image and replace the background.",
+        images=source_images[0],
+        max_tool_iterations=2,
+    )
+
+    assert result.prompts["workflow"] == "generation"
+    assert len(result.tool_results) == 1
+    tool_result = next(iter(result.tool_results.values()))
+    assert tool_result["success"] is True
+    assert result.additional_images == [tool_result["output_path"]]
+    assert Path(result.additional_images[0]).is_file()
+    assert model.seen_image_counts == [1, 2]
+
+
+def test_tool_rejects_success_with_missing_output(source_images, tmp_path):
+    tool = QwenImageEditTool(use_mock=True)
+
+    class BrokenClient:
+        def edit_image(self, **kwargs):
+            del kwargs
+            missing = str(tmp_path / "missing.png")
+            return {
+                "success": True,
+                "output_path": missing,
+                "image_paths": [missing],
+            }
+
+    tool._client = BrokenClient()
+    result = tool.call(source_images[0], "Edit it carefully.")
+    assert result["success"] is False
+    assert "unavailable local output" in result["error"]
+
+
 @requires_httpx
 def test_http_client_matches_official_request_and_downloads_png(
     source_images, tmp_path
@@ -238,6 +331,97 @@ def test_http_client_matches_official_request_and_downloads_png(
         "size": "1024*1024",
         "seed": 9,
     }
+
+
+@requires_httpx
+def test_http_client_uses_decoded_image_mime_type(tmp_path):
+    import httpx
+
+    from spagent.external_experts.QwenImageEdit import QwenImageEditClient
+
+    disguised_png = tmp_path / "actually_png.jpg"
+    disguised_png.write_bytes(_png_bytes())
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            captured["payload"] = json.loads(request.content)
+            return httpx.Response(
+                200,
+                json={
+                    "output": {
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": [
+                                        {"image": "https://result.test/edit.png"}
+                                    ]
+                                }
+                            }
+                        ]
+                    },
+                    "request_id": "mime-test",
+                },
+            )
+        return httpx.Response(200, content=_png_bytes())
+
+    http_client = httpx.Client(transport=httpx.MockTransport(handler))
+    client = QwenImageEditClient(
+        api_key="test-key",
+        output_dir=str(tmp_path / "out"),
+        http_client=http_client,
+    )
+    try:
+        result = client.edit_image(str(disguised_png), "Edit it")
+    finally:
+        http_client.close()
+    assert result["success"] is True
+    image_value = captured["payload"]["input"]["messages"][0]["content"][0]["image"]
+    assert image_value.startswith("data:image/png;base64,")
+
+
+@requires_httpx
+def test_http_client_hides_signed_output_url_on_download_error(source_images, tmp_path):
+    import httpx
+
+    from spagent.external_experts.QwenImageEdit import QwenImageEditClient
+
+    signed_url = "https://result.test/edit.png?Signature=secret-token"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            return httpx.Response(
+                200,
+                json={
+                    "output": {
+                        "choices": [{"message": {"content": [{"image": signed_url}]}}]
+                    },
+                    "request_id": "signed-url-test",
+                },
+            )
+        return httpx.Response(503, content=b"unavailable")
+
+    http_client = httpx.Client(transport=httpx.MockTransport(handler))
+    client = QwenImageEditClient(
+        api_key="test-key",
+        output_dir=str(tmp_path),
+        http_client=http_client,
+    )
+    try:
+        result = client.edit_image(source_images[0], "Edit it")
+    finally:
+        http_client.close()
+    assert result["success"] is False
+    assert "HTTP 503" in result["error"]
+    assert "secret-token" not in result["error"]
+
+
+@requires_httpx
+def test_http_client_rejects_invalid_timeout():
+    from spagent.external_experts.QwenImageEdit import QwenImageEditClient
+
+    with pytest.raises(ValueError, match="positive finite"):
+        QwenImageEditClient(api_key="test-key", timeout=0)
 
 
 @requires_httpx

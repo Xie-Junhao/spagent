@@ -3,7 +3,11 @@
 Imports are lazy so mock-only catalog builds do not require the HTTP stack.
 """
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .mock_qwen_image_edit_service import MockQwenImageEditService
+    from .qwen_image_edit_client import QwenImageEditClient
 
 __all__ = ["MockQwenImageEditService", "QwenImageEditClient"]
 

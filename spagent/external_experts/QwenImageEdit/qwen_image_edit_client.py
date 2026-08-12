@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import io
 import logging
+import math
 import mimetypes
 import os
 import re
@@ -71,6 +72,8 @@ class QwenImageEditClient:
         ).expanduser()
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.timeout = float(timeout)
+        if not math.isfinite(self.timeout) or self.timeout <= 0:
+            raise ValueError("timeout must be a positive finite number.")
         self._http_client = http_client
 
     def edit_image(
@@ -172,7 +175,8 @@ class QwenImageEditClient:
                 if close_client:
                     client.close()
 
-            usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+            usage_value = data.get("usage")
+            usage: Dict[str, Any] = usage_value if isinstance(usage_value, dict) else {}
             file_sizes = [Path(path).stat().st_size for path in image_paths_out]
             return {
                 "success": True,
@@ -189,8 +193,17 @@ class QwenImageEditClient:
         except (ValueError, OSError) as exc:
             return {"success": False, "error": str(exc)}
         except httpx.HTTPError as exc:
-            logger.error("Qwen Image Edit HTTP request failed: %s", exc)
-            return {"success": False, "error": f"Qwen Image Edit request failed: {exc}"}
+            # Download errors can contain signed result URLs. Do not expose
+            # their query strings in logs or tool results.
+            if isinstance(exc, httpx.HTTPStatusError):
+                detail = f"HTTP {exc.response.status_code}"
+            else:
+                detail = exc.__class__.__name__
+            logger.error("Qwen Image Edit HTTP request failed (%s)", detail)
+            return {
+                "success": False,
+                "error": f"Qwen Image Edit request failed ({detail}).",
+            }
         except Exception as exc:
             logger.exception("Unexpected Qwen Image Edit client error")
             return {"success": False, "error": f"Qwen Image Edit failed: {exc}"}
@@ -268,11 +281,15 @@ class QwenImageEditClient:
         path = Path(value).expanduser()
         if not path.is_file():
             raise ValueError(f"Image file not found: {image_path}")
-        if path.stat().st_size > MAX_INPUT_BYTES:
+        try:
+            content = path.read_bytes()
+        except OSError as exc:
+            raise ValueError(f"Could not read image file: {image_path}") from exc
+        if len(content) > MAX_INPUT_BYTES:
             raise ValueError(f"Input image exceeds the 10 MB API limit: {image_path}")
 
         try:
-            with Image.open(path) as image:
+            with Image.open(io.BytesIO(content)) as image:
                 image_format = (image.format or "").upper()
                 image.verify()
         except Exception as exc:
@@ -282,10 +299,11 @@ class QwenImageEditClient:
                 f"Unsupported image format {image_format or 'unknown'}: {image_path}"
             )
 
-        mime_type = mimetypes.guess_type(path.name)[0] or Image.MIME.get(image_format)
+        # Prefer the decoded format over the filename extension.
+        mime_type = Image.MIME.get(image_format) or mimetypes.guess_type(path.name)[0]
         if not mime_type or not mime_type.startswith("image/"):
             raise ValueError(f"Could not determine image MIME type: {image_path}")
-        encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+        encoded = base64.b64encode(content).decode("ascii")
         return f"data:{mime_type};base64,{encoded}"
 
     def _response_json(self, response: httpx.Response) -> Dict[str, Any]:
@@ -365,7 +383,8 @@ class QwenImageEditClient:
         try:
             with Image.open(io.BytesIO(content)) as image:
                 image.load()
-                output_image = image.convert("RGB")
+                has_alpha = "A" in image.getbands() or "transparency" in image.info
+                output_image = image.convert("RGBA" if has_alpha else "RGB")
         except Exception as exc:
             raise ValueError("Qwen Image Edit output is not a valid image.") from exc
 
