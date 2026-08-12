@@ -1,9 +1,10 @@
 import hashlib
 import logging
 import os
+import tempfile
 import time
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 from PIL import Image, ImageDraw
@@ -14,8 +15,8 @@ logger = logging.getLogger(__name__)
 class MockSAM3Service:
     """Mock SAM3 service for image/video text-prompt segmentation tests."""
 
-    def __init__(self, output_dir: str = "outputs/sam3_mock"):
-        self.output_dir = output_dir
+    def __init__(self, output_dir: Optional[str] = None):
+        self.output_dir = output_dir or str(Path(tempfile.gettempdir()) / "spagent_sam3_mock")
         os.makedirs(self.output_dir, exist_ok=True)
 
     def infer(
@@ -186,4 +187,3 @@ class MockSAM3Service:
             (171, 71, 188),
         ]
         return palette[idx % len(palette)]
-
