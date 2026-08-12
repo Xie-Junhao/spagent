@@ -47,13 +47,16 @@ class QwenImageEditClient:
                 "DashScope API key is required. Set DASHSCOPE_API_KEY or pass api_key."
             )
         self.api_key = resolved_api_key.strip()
-        if not model or not model.strip():
+        if not isinstance(model, str) or not model.strip():
             raise ValueError("model must be a non-empty string")
 
         self.model = model.strip()
-        resolved_base_url = (
+        base_url_value = (
             base_url or os.environ.get("DASHSCOPE_BASE_URL") or DEFAULT_BASE_URL
-        ).rstrip("/")
+        )
+        if not isinstance(base_url_value, str) or not base_url_value.strip():
+            raise ValueError("base_url must be a non-empty HTTP(S) URL.")
+        resolved_base_url = base_url_value.strip().rstrip("/")
         parsed_base_url = urlparse(resolved_base_url)
         if (
             parsed_base_url.scheme not in ("http", "https")
@@ -262,10 +265,8 @@ class QwenImageEditClient:
             raise ValueError(
                 "size must contain between 512*512 and 2048*2048 total pixels."
             )
-        if width > 2048 or height > 2048:
-            raise ValueError("size width and height must not exceed 2048 pixels.")
         if self.model.startswith(("qwen-image-edit-plus", "qwen-image-edit-max")) and (
-            width < 512 or height < 512
+            not 512 <= width <= 2048 or not 512 <= height <= 2048
         ):
             raise ValueError(
                 "qwen-image-edit-plus/max require width and height between 512 and 2048."
@@ -318,15 +319,23 @@ class QwenImageEditClient:
         return data
 
     def _api_error(self, status_code: int, data: Dict[str, Any]) -> Dict[str, Any]:
-        code = data.get("code") or "APIError"
-        message = data.get("message") or f"HTTP {status_code}"
-        request_id = data.get("request_id")
+        code = self._redact_api_value(data.get("code") or "APIError")
+        message = self._redact_api_value(data.get("message") or f"HTTP {status_code}")
+        raw_request_id = data.get("request_id")
+        request_id = (
+            self._redact_api_value(raw_request_id)
+            if raw_request_id is not None
+            else None
+        )
         suffix = f" (request_id={request_id})" if request_id else ""
         return {
             "success": False,
             "error": f"Qwen Image Edit API error {code}: {message}{suffix}",
             "request_id": request_id,
         }
+
+    def _redact_api_value(self, value: Any) -> str:
+        return str(value).replace(self.api_key, "[REDACTED]")
 
     def _extract_image_urls(self, data: Dict[str, Any]) -> List[str]:
         urls: List[str] = []

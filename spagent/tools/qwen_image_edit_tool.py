@@ -4,16 +4,26 @@ from __future__ import annotations
 
 import logging
 import re
-import sys
+from importlib import import_module
 from pathlib import Path
+from types import ModuleType
 from typing import Any, Dict, List, Optional
 
-sys.path.append(str(Path(__file__).parent.parent))
-
-from core.tool import Tool
-from core.tool_result import IMAGE_GENERATION, MediaPayload, ToolResult
+try:
+    # Normal public import path through the spagent package.
+    from ..core.tool import Tool
+    from ..core.tool_result import IMAGE_GENERATION, MediaPayload, ToolResult
+except ImportError:  # pragma: no cover - legacy tools.* script imports
+    from core.tool import Tool
+    from core.tool_result import IMAGE_GENERATION, MediaPayload, ToolResult
 
 logger = logging.getLogger(__name__)
+
+
+def _load_external_module(module_name: str) -> ModuleType:
+    """Load an expert module through package or legacy script imports."""
+    prefix = "spagent." if (__package__ or "").startswith("spagent.") else ""
+    return import_module(f"{prefix}external_experts.QwenImageEdit.{module_name}")
 
 
 class QwenImageEditTool(Tool):
@@ -37,22 +47,20 @@ class QwenImageEditTool(Tool):
                 "generated and must not be treated as evidence about the original scene."
             ),
         )
+        if not isinstance(model, str) or not model.strip():
+            raise ValueError("model must be a non-empty string")
         self.use_mock = use_mock
-        self.model_name = model
+        self.model_name = model.strip()
         if use_mock:
-            from external_experts.QwenImageEdit.mock_qwen_image_edit_service import (
-                MockQwenImageEditService,
+            mock_module = _load_external_module("mock_qwen_image_edit_service")
+            self._client: Any = mock_module.MockQwenImageEditService(
+                output_dir=output_dir
             )
-
-            self._client = MockQwenImageEditService(output_dir=output_dir)
         else:
-            from external_experts.QwenImageEdit.qwen_image_edit_client import (
-                QwenImageEditClient,
-            )
-
-            self._client = QwenImageEditClient(
+            client_module = _load_external_module("qwen_image_edit_client")
+            self._client = client_module.QwenImageEditClient(
                 api_key=api_key,
-                model=model,
+                model=self.model_name,
                 base_url=base_url,
                 output_dir=output_dir,
                 timeout=timeout,
@@ -171,6 +179,7 @@ class QwenImageEditTool(Tool):
                     success=False,
                     error=f"Qwen Image Edit failed: {error_msg}",
                     description=f"Qwen Image Edit failed: {error_msg}",
+                    request_id=result.get("request_id") if result else None,
                 )
 
             output_path = result.get("output_path")
@@ -290,11 +299,9 @@ class QwenImageEditTool(Tool):
             width, height = (int(value) for value in match.groups())
             if width * height < 512 * 512 or width * height > 2048 * 2048:
                 return "size must contain between 512*512 and 2048*2048 total pixels."
-            if width > 2048 or height > 2048:
-                return "size width and height must not exceed 2048 pixels."
             if self.model_name.startswith(
                 ("qwen-image-edit-plus", "qwen-image-edit-max")
-            ) and (width < 512 or height < 512):
+            ) and (not 512 <= width <= 2048 or not 512 <= height <= 2048):
                 return "qwen-image-edit-plus/max require width and height between 512 and 2048."
 
         paths = [image_path, *(reference_image_paths or [])]

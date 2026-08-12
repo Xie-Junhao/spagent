@@ -14,8 +14,9 @@ from PIL import Image
 from spagent.tools import QwenImageEditTool
 from spagent.tools.catalog import build_tools, resolve_tool_keys
 from spagent.core.prompts import build_tool_selection_guide
-from core.render import render
-from core.tool_result import ToolResult, validate_payload
+from spagent.core.render import render
+from spagent.core.tool import Tool
+from spagent.core.tool_result import ToolResult, validate_payload
 
 
 @pytest.fixture
@@ -44,6 +45,7 @@ def test_tool_is_exported_and_schema_is_valid():
     tool = QwenImageEditTool(use_mock=True)
     schema = tool.to_function_schema()
 
+    assert isinstance(tool, Tool)
     assert tool.name == "qwen_image_edit_tool"
     assert schema["function"]["parameters"]["required"] == ["image_path", "prompt"]
     properties = schema["function"]["parameters"]["properties"]
@@ -132,6 +134,16 @@ def test_legacy_model_constraints_are_checked(source_images):
     assert "only supports n=1" in result["error"]
 
 
+def test_model_name_is_normalized_and_validated(source_images):
+    tool = QwenImageEditTool(use_mock=True, model="  qwen-image-edit  ")
+    result = tool.call(image_path=source_images[0], prompt="Edit it", n=2)
+    assert result["success"] is False
+    assert "only supports n=1" in result["error"]
+
+    with pytest.raises(ValueError, match="non-empty"):
+        QwenImageEditTool(use_mock=True, model="   ")
+
+
 def test_plus_model_dimensions_are_checked(source_images):
     tool = QwenImageEditTool(use_mock=True, model="qwen-image-edit-plus")
     result = tool.call(
@@ -141,6 +153,42 @@ def test_plus_model_dimensions_are_checked(source_images):
     )
     assert result["success"] is False
     assert "require width and height" in result["error"]
+
+
+def test_qwen_image_2_size_uses_total_pixel_limit(source_images):
+    tool = QwenImageEditTool(use_mock=True, model="qwen-image-2.0")
+    error = tool._validate_inputs(
+        image_path=source_images[0],
+        prompt="Create a wide edit.",
+        reference_image_paths=None,
+        negative_prompt=None,
+        size="2688*1536",
+        n=1,
+        seed=None,
+        prompt_extend=True,
+        watermark=False,
+    )
+    assert error is None
+
+
+@requires_httpx
+def test_http_client_applies_model_specific_size_limits(tmp_path):
+    from spagent.external_experts.QwenImageEdit import QwenImageEditClient
+
+    client = QwenImageEditClient(
+        api_key="test-key",
+        model="qwen-image-2.0",
+        output_dir=str(tmp_path),
+    )
+    client._validate_size("2688*1536")
+
+    plus_client = QwenImageEditClient(
+        api_key="test-key",
+        model="qwen-image-edit-plus",
+        output_dir=str(tmp_path),
+    )
+    with pytest.raises(ValueError, match="width and height"):
+        plus_client._validate_size("2688*1536")
 
 
 def test_catalog_builds_tool_and_resolves_function_name():
@@ -240,6 +288,24 @@ def test_tool_rejects_success_with_missing_output(source_images, tmp_path):
     result = tool.call(source_images[0], "Edit it carefully.")
     assert result["success"] is False
     assert "unavailable local output" in result["error"]
+
+
+def test_tool_preserves_failed_api_request_id(source_images):
+    tool = QwenImageEditTool(use_mock=True)
+
+    class FailedClient:
+        def edit_image(self, **kwargs):
+            del kwargs
+            return {
+                "success": False,
+                "error": "API request failed.",
+                "request_id": "req-debug-1",
+            }
+
+    tool._client = FailedClient()
+    result = tool.call(source_images[0], "Edit it carefully.")
+    assert result["success"] is False
+    assert result["request_id"] == "req-debug-1"
 
 
 @requires_httpx
@@ -425,6 +491,16 @@ def test_http_client_rejects_invalid_timeout():
 
 
 @requires_httpx
+def test_http_client_rejects_invalid_constructor_strings():
+    from spagent.external_experts.QwenImageEdit import QwenImageEditClient
+
+    with pytest.raises(ValueError, match="model must be"):
+        QwenImageEditClient(api_key="test-key", model=123)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="base_url must be"):
+        QwenImageEditClient(api_key="test-key", base_url=123)  # type: ignore[arg-type]
+
+
+@requires_httpx
 def test_http_client_surfaces_api_error_without_key(source_images, tmp_path):
     import httpx
 
@@ -434,7 +510,11 @@ def test_http_client_surfaces_api_error_without_key(source_images, tmp_path):
         assert "test-secret" not in request.content.decode("utf-8")
         return httpx.Response(
             401,
-            json={"code": "InvalidApiKey", "message": "invalid", "request_id": "req-1"},
+            json={
+                "code": "InvalidApiKey",
+                "message": "invalid key test-secret",
+                "request_id": "req-1",
+            },
         )
 
     http_client = httpx.Client(transport=httpx.MockTransport(handler))
@@ -451,6 +531,7 @@ def test_http_client_surfaces_api_error_without_key(source_images, tmp_path):
     assert "InvalidApiKey" in result["error"]
     assert "req-1" in result["error"]
     assert "test-secret" not in result["error"]
+    assert "[REDACTED]" in result["error"]
 
 
 @requires_httpx
