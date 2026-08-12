@@ -108,10 +108,14 @@ class SAM3Client:
             if not result.get("success"):
                 return result
 
-            if result.get("video"):
+            if result.get("video") and save_overlay:
                 output_path = self._save_video(video_path, result["video"])
                 result["output_path"] = output_path
                 result["video_path"] = output_path
+            else:
+                result.pop("video", None)
+                result["output_path"] = None
+                result["video_path"] = None
             return result
         except Exception as e:
             logger.error("SAM3 video inference request failed: %s", e)

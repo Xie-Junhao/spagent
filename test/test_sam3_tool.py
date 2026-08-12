@@ -111,6 +111,23 @@ def test_sam3_mock_video_segmentation(tmp_path):
     assert result["frames"] == 4
 
 
+def test_sam3_server_extracts_official_video_mask_key():
+    pytest.importorskip("cv2")
+    from spagent.external_experts.SAM3.sam3_server import _extract_video_masks
+
+    official_output = {
+        "out_binary_masks": np.array(
+            [[[False, True], [True, False]]],
+            dtype=bool,
+        )
+    }
+    masks = _extract_video_masks(official_output)
+
+    assert len(masks) == 1
+    assert masks[0].dtype == np.uint8
+    assert masks[0].tolist() == [[0, 255], [255, 0]]
+
+
 @pytest.mark.skipif(
     os.environ.get("SAM3_REAL_TEST") != "1",
     reason="Set SAM3_REAL_TEST=1 to run against a live SAM3 server.",
