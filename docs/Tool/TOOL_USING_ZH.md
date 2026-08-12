@@ -31,7 +31,8 @@ external_experts/
 ├── Sora/                          # OpenAI Sora 视频生成（API 直调，无需本地服务器）
 ├── vace/                          # VACE 本地视频生成（首帧驱动流水线，服务端口 20034）
 ├── PaddleOCRVL/                   # 文档 OCR 与结构化识别（PaddleOCR-VL-1.5，端口 20037）
-└── supervision/                   # YOLO目标检测和标注工具
+├── supervision/                   # YOLO目标检测和标注工具
+└── QwenImageEdit/                 # Qwen 指令式图像编辑（DashScope API）
 ```
 
 ## 🛠️ 工具概览
@@ -56,6 +57,7 @@ external_experts/
 | **Orient Anything V2** | `OrientAnythingV2Tool` | 物体朝向与旋转估计 | 估计物体绝对朝向（方位角/仰角/旋转角/对称阶数）以及两视角间的相对位姿（NeurIPS 2025 Spotlight） | 本地服务器（20034） | `image_path`, `task`, `image_path2`(可选) |
 | **VACE** | `VaceTool` | 本地视频生成 | 基于单张参考图 + 文本提示词，通过本地 Wan2.1-VACE 首帧流水线生成短视频，返回 `.mp4` 路径 | 本地服务器（20034） | `image_path`, `prompt`, `base`(可选), `task`(可选), `mode`(可选) |
 | **PaddleOCR-VL-1.5** | `PaddleOCRVLTool` | 文档 OCR 与结构化识别 | 0.9B 视觉语言模型，支持纯文本 OCR、表格解析、图表读取、公式转 LaTeX、文本定位与印章识别；支持本地/服务器/mock 模式；无需额外 checkpoint 环境变量 | 本地或服务器（20037） | `image_path`, `task`（`"ocr"` / `"table"` / `"chart"` / `"formula"` / `"spotting"` / `"seal"`） |
+| **Qwen Image Edit** | `QwenImageEditTool` | 指令式图像编辑 | 编辑基础图像、增加或替换内容、修改风格或文字，并支持融合最多两张参考图像 | DashScope API（无需服务器） | `image_path`, `prompt`, `reference_image_paths`(可选), `size`(可选), `n`(可选), `seed`(可选) |
 
 **使用示例**:
 - 详细使用示例请参考：[Advanced Examples](../Examples/ADVANCED_EXAMPLES.md)
@@ -1261,6 +1263,53 @@ print(result["answer"])
 **资源链接**：
 - [PaddleOCR-VL-1.5（HuggingFace）](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.5)
 - [论文](https://arxiv.org/abs/2505.09816)
+
+---
+
+### 15. Qwen Image Edit - 指令式图像编辑
+
+**功能**：使用自然语言指令编辑现有图像，或融合最多三张输入图像中的内容。
+
+**配置**：
+
+```bash
+export DASHSCOPE_API_KEY="your_api_key"
+
+# 可选：百炼业务空间专属地址
+export DASHSCOPE_BASE_URL="https://YOUR_WORKSPACE_ID.cn-beijing.maas.aliyuncs.com/api/v1"
+```
+
+**Python 调用示例**：
+
+```python
+from spagent.tools import QwenImageEditTool
+
+tool = QwenImageEditTool(use_mock=False)
+
+# 单图指令编辑
+result = tool.call(
+    image_path="room.png",
+    prompt="把椅子替换为红色皮质扶手椅，保持房间布局和光照不变。",
+    seed=42,
+)
+print(result["output_path"])
+
+# 多图融合
+result = tool.call(
+    image_path="city.png",
+    reference_image_paths=["character.png"],
+    prompt="以图1为基础场景，把图2中的角色放在人行道上。",
+    size="1280*960",
+    n=2,
+)
+print(result["image_paths"])
+```
+
+默认模型为 `qwen-image-2.0`。基础图像和参考图像均可使用本地文件或公网 URL。生成结果会立即下载，并以本地 PNG 路径返回。
+
+**资源链接**：
+- [Qwen-Image GitHub](https://github.com/QwenLM/Qwen-Image)
+- [Qwen Image Edit API](https://help.aliyun.com/zh/model-studio/qwen-image-edit-api)
 
 ---
 

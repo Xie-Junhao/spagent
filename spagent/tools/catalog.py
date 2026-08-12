@@ -32,6 +32,7 @@ from .sana_tool import SanaTool
 from .veo_tool import VeoTool
 from .sora_tool import SoraTool
 from .wan_tool import WanTool
+from .qwen_image_edit_tool import QwenImageEditTool
 from .vace_tool import VaceTool
 from .qwenvl_tool import QwenVLTool
 from .flowseek_tool import FlowSeekTool
@@ -274,6 +275,14 @@ TOOL_CATALOG: List[ToolCatalogEntry] = [
         "video_generation_vace_tool",
         {"server_url": DEFAULT_SERVER_URLS["vace"]},
         category="video_generation",
+    ),
+    ToolCatalogEntry(
+        "qwen_image_edit",
+        QwenImageEditTool,
+        "generation",
+        "qwen_image_edit_tool",
+        {},
+        category="image_generation",
     ),
     # Previously exported but unregistered (docs/Tool/TOOL_CONFIGURATIONS.md)
     ToolCatalogEntry(

@@ -34,7 +34,8 @@ external_experts/
 ├── FlowSeek/                      # Optical flow estimation between image pairs (local or server port 20036)
 ├── PaddleOCRVL/                   # Document OCR & structured recognition (PaddleOCR-VL-1.5, port 20037)
 ├── OneFormer/                     # Universal image segmentation semantic/instance/panoptic (port 20038)
-└── supervision/                   # YOLO object detection and annotation tools
+├── supervision/                   # YOLO object detection and annotation tools
+└── QwenImageEdit/                 # Qwen instruction-based image editing (DashScope API)
 ```
 
 ## 🛠️ Tool Overview
@@ -64,6 +65,7 @@ external_experts/
 | **FlowSeek** | `FlowSeekTool` | Optical Flow Estimation | Estimate dense per-pixel motion between two images (consecutive frames or before/after pairs); returns colorized flow visualization; M variant (ViT-B) or T variant (ViT-S); source vendored in repo, requires `FLOWSEEK_CHECKPOINT` and `FLOWSEEK_DAV2_CHECKPOINT` env vars | Local / Server (port 20036) | `image1_path`, `image2_path`, `output_path`(optional) |
 | **PaddleOCR-VL-1.5** | `PaddleOCRVLTool` | Document OCR & Structured Recognition | 0.9B VLM for plain OCR, table parsing, chart reading, formula → LaTeX, text spotting, and seal recognition; supports local/server/mock; no checkpoint env var required | Local or Server (port 20037) | `image_path`, `task` ("ocr" / "table" / "chart" / "formula" / "spotting" / "seal") |
 | **OneFormer** | `OneFormerTool` | Universal Image Segmentation | Single model for semantic / instance / panoptic; HF auto-download; returns colorized overlay + mask_path id-map | Local / Server (port 20038) | `image_path`, `task` ("semantic" / "instance" / "panoptic") |
+| **Qwen Image Edit** | `QwenImageEditTool` | Instruction-based Image Editing | Edit a base image, replace or add content, change style or text, and fuse up to two reference images | DashScope API (no server) | `image_path`, `prompt`, `reference_image_paths`(optional), `size`(optional), `n`(optional), `seed`(optional) |
 
 **Usage Examples**:
 - For detailed usage examples, please refer to: [Advanced Examples](../Examples/ADVANCED_EXAMPLES.md)
@@ -1546,6 +1548,53 @@ python test/test_tool.py --tool oneformer --image assets/dog.jpeg --seg_task pan
 
 **Resources**:
 - [OneFormer GitHub](https://github.com/SHI-Labs/OneFormer)
+
+---
+
+### 18. Qwen Image Edit - Instruction-based Image Editing
+
+**Function**: Edit an existing image from a natural-language instruction, or fuse content from up to three input images using Qwen Image.
+
+**Setup**:
+
+```bash
+export DASHSCOPE_API_KEY="your_api_key"
+
+# Optional workspace-specific Model Studio endpoint
+export DASHSCOPE_BASE_URL="https://YOUR_WORKSPACE_ID.cn-beijing.maas.aliyuncs.com/api/v1"
+```
+
+**Python Usage**:
+
+```python
+from spagent.tools import QwenImageEditTool
+
+tool = QwenImageEditTool(use_mock=False)
+
+# Single-image instruction editing
+result = tool.call(
+    image_path="room.png",
+    prompt="Replace the chair with a red leather armchair. Preserve the room layout and lighting.",
+    seed=42,
+)
+print(result["output_path"])
+
+# Multi-image fusion
+result = tool.call(
+    image_path="city.png",
+    reference_image_paths=["character.png"],
+    prompt="Use Image 1 as the base scene and place the character from Image 2 on the sidewalk.",
+    size="1280*960",
+    n=2,
+)
+print(result["image_paths"])
+```
+
+The default model is `qwen-image-2.0`. `image_path` and reference images may be local files or public URLs. Generated images are downloaded immediately and returned as local PNG paths.
+
+**Resources**:
+- [Qwen-Image GitHub](https://github.com/QwenLM/Qwen-Image)
+- [Qwen Image Edit API](https://help.aliyun.com/en/model-studio/qwen-image-edit-api)
 
 ---
 
