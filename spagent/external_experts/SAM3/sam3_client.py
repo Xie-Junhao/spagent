@@ -1,6 +1,7 @@
 import base64
 import logging
 import os
+import tempfile
 import time
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -15,9 +16,9 @@ logger = logging.getLogger(__name__)
 class SAM3Client:
     """HTTP client for the SAM3 image/video segmentation service."""
 
-    def __init__(self, server_url: str = "http://127.0.0.1:20035", output_dir: str = "outputs/sam3_client"):
+    def __init__(self, server_url: str = "http://127.0.0.1:20035", output_dir: Optional[str] = None):
         self.server_url = server_url.rstrip("/")
-        self.output_dir = output_dir
+        self.output_dir = output_dir or str(Path(tempfile.gettempdir()) / "spagent_sam3_client")
         os.makedirs(self.output_dir, exist_ok=True)
 
     def health_check(self) -> Optional[Dict]:
@@ -202,4 +203,3 @@ class SAM3Client:
             (255, 255, 0),
         ]
         return colors[idx % len(colors)]
-
