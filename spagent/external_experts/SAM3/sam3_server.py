@@ -172,6 +172,7 @@ def infer_video():
 
     temp_path = None
     output_path = None
+    session_id = None
     try:
         data = request.get_json() or {}
         if "video" not in data:
@@ -186,6 +187,7 @@ def infer_video():
             temp_path = f.name
 
         frame_index = int(data.get("frame_index", 0))
+        score_threshold = float(data.get("score_threshold", 0.5))
         start_response = video_predictor.handle_request(
             request={"type": "start_session", "resource_path": temp_path}
         )
@@ -196,12 +198,17 @@ def infer_video():
                 "session_id": session_id,
                 "frame_index": frame_index,
                 "text": text_prompt,
+                "output_prob_thresh": score_threshold,
             }
         )
         outputs_per_frame = {frame_index: prompt_response.get("outputs", {})}
         if hasattr(video_predictor, "handle_stream_request"):
             for response in video_predictor.handle_stream_request(
-                request={"type": "propagate_in_video", "session_id": session_id}
+                request={
+                    "type": "propagate_in_video",
+                    "session_id": session_id,
+                    "output_prob_thresh": score_threshold,
+                }
             ):
                 outputs_per_frame[response["frame_index"]] = response.get("outputs", {})
 
@@ -226,6 +233,13 @@ def infer_video():
         logger.error(traceback.format_exc())
         return jsonify({"success": False, "error": str(e)}), 500
     finally:
+        if session_id is not None:
+            try:
+                video_predictor.handle_request(
+                    request={"type": "close_session", "session_id": session_id}
+                )
+            except Exception as e:
+                logger.warning("Failed to close SAM3 video session %s: %s", session_id, e)
         for path in [temp_path, output_path]:
             if path and os.path.exists(path):
                 try:
@@ -338,7 +352,7 @@ def _overlay_frame(frame: np.ndarray, frame_outputs):
 
 def _extract_video_masks(frame_outputs) -> List[np.ndarray]:
     if isinstance(frame_outputs, dict):
-        for key in ["masks", "pred_masks", "mask"]:
+        for key in ["out_binary_masks", "masks", "pred_masks", "mask"]:
             if key in frame_outputs:
                 value = _to_numpy(frame_outputs[key])
                 if value is None:
