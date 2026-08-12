@@ -182,13 +182,17 @@ class WildDet3DTool(Tool):
                     f"WildDet3D detected {len(boxes_2d)} object(s)."
                 )
                 extras = {key: value for key, value in raw.items() if key not in _ENVELOPE_KEYS}
-                return ToolResult(
+                tool_result = ToolResult(
                     success=True,
                     payload=payload,
                     description=description,
                     output_path=result.get("output_path"),
                     **extras,
                 )
+                # Preserve the original WildDet3D response shape when
+                # visualization is disabled; ToolResult omits None paths.
+                tool_result.setdefault("output_path", result.get("output_path"))
+                return tool_result
 
             error_msg = result.get("error", "Unknown error") if result else "No result returned"
             return ToolResult.fail(f"WildDet3D detection failed: {error_msg}", category=DETECTION)
