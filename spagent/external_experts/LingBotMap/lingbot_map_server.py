@@ -295,7 +295,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="LingBot-Map Server")
     parser.add_argument("--repo_path", type=str, required=True, help="Path to the official LingBot-Map repository")
     parser.add_argument("--model_path", type=str, required=True, help="Path to a LingBot-Map checkpoint")
-    parser.add_argument("--port", type=int, default=20038, help="Port to run this SPAgent wrapper server on")
+    parser.add_argument("--port", type=int, default=20040, help="Port to run this SPAgent wrapper server on")
     parser.add_argument("--python_bin", type=str, default=None, help="Python executable for the LingBot-Map environment")
     parser.add_argument("--viewer_host", type=str, default="127.0.0.1", help="Host shown in returned viewer URL")
     parser.add_argument("--viewer_port", type=int, default=8080, help="Viser viewer port used by LingBot-Map demo.py")

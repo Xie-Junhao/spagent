@@ -59,7 +59,7 @@ external_experts/
 | **VACE** | `VaceTool` | 本地视频生成 | 基于单张参考图 + 文本提示词，通过本地 Wan2.1-VACE 首帧流水线生成短视频，返回 `.mp4` 路径 | 本地服务器（20034） | `image_path`, `prompt`, `base`(可选), `task`(可选), `mode`(可选) |
 | **PaddleOCR-VL-1.5** | `PaddleOCRVLTool` | 文档 OCR 与结构化识别 | 0.9B 视觉语言模型，支持纯文本 OCR、表格解析、图表读取、公式转 LaTeX、文本定位与印章识别；支持本地/服务器/mock 模式；无需额外 checkpoint 环境变量 | 本地或服务器（20037） | `image_path`, `task`（`"ocr"` / `"table"` / `"chart"` / `"formula"` / `"spotting"` / `"seal"`） |
 | **Qwen Image Edit** | `QwenImageEditTool` | 指令式图像编辑 | 编辑基础图像、增加或替换内容、修改风格或文字，并支持融合最多两张参考图像 | DashScope API（无需服务器） | `image_path`, `prompt`, `reference_image_paths`(可选), `size`(可选), `n`(可选), `seed`(可选) |
-| **LingBot-Map** | `LingBotMapTool` | 长序列3D场景建图 | 从有序图片文件夹或图片列表构建交互式3D地图 | 本地服务器（20038） | `image_folder` 或 `image_paths`, `mask_sky`, `keyframe_interval`, `max_frames` |
+| **LingBot-Map** | `LingBotMapTool` | 长序列3D场景建图 | 从有序图片文件夹或图片列表构建交互式3D地图 | 本地服务器（20040） | `image_folder` 或 `image_paths`, `mask_sky`, `keyframe_interval`, `max_frames` |
 
 **使用示例**:
 - 详细使用示例请参考：[Advanced Examples](../Examples/ADVANCED_EXAMPLES.md)
@@ -1340,14 +1340,14 @@ pip install flask
 python spagent/external_experts/LingBotMap/lingbot_map_server.py \
   --repo_path third_party/lingbot-map \
   --model_path checkpoints/lingbot_map/lingbot-map-long.pt \
-  --port 20038
+  --port 20040
 ```
 
 **Python 调用示例**：
 ```python
 from spagent.tools import LingBotMapTool
 
-tool = LingBotMapTool(use_mock=False, server_url="http://127.0.0.1:20038")
+tool = LingBotMapTool(use_mock=False, server_url="http://127.0.0.1:20040")
 result = tool.call(
     image_folder="example/courthouse",
     mask_sky=True,
