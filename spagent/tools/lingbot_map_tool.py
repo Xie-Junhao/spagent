@@ -26,7 +26,7 @@ class LingBotMapTool(Tool):
     def __init__(
         self,
         use_mock: bool = True,
-        server_url: str = "http://127.0.0.1:20038",
+        server_url: str = "http://127.0.0.1:20040",
         output_dir: Optional[str] = None,
     ):
         super().__init__(

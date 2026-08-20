@@ -16,7 +16,7 @@ class LingBotMapClient:
     """HTTP client for the LingBot-Map Flask service."""
 
     def __init__(self, server_url: Optional[str] = None, output_dir: Optional[str] = None):
-        self.server_url = (server_url or os.environ.get("LINGBOT_MAP_SERVER_URL", "http://127.0.0.1:20038")).rstrip("/")
+        self.server_url = (server_url or os.environ.get("LINGBOT_MAP_SERVER_URL", "http://127.0.0.1:20040")).rstrip("/")
         self.output_dir = Path(output_dir) if output_dir else Path(tempfile.gettempdir()) / "spagent_lingbot_map"
         self.output_dir.mkdir(parents=True, exist_ok=True)
 

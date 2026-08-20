@@ -223,7 +223,7 @@ out.mkdir(parents=True, exist_ok=True)
 )
 def test_real_lingbot_map_server_smoke(tmp_path):
     frames = _make_frames(tmp_path, count=8)
-    server_url = os.environ.get("LINGBOT_MAP_SERVER_URL", "http://127.0.0.1:20038")
+    server_url = os.environ.get("LINGBOT_MAP_SERVER_URL", "http://127.0.0.1:20040")
     tool = LingBotMapTool(use_mock=False, server_url=server_url, output_dir=str(tmp_path / "out"))
 
     result = tool.call(image_paths=frames, mask_sky=False, wait_for_completion=False)
