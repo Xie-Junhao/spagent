@@ -1275,6 +1275,14 @@ print(result["answer"])
 - 可选导出点云
 - 通过本地服务调用官方 InfiniDepth 推理脚本
 
+**官方源码**:
+```bash
+git clone https://github.com/zju3dv/InfiniDepth.git third_party/InfiniDepth
+git -C third_party/InfiniDepth checkout 36c6e0c31887fafc210184ee43ca475230704095
+pip install -r third_party/InfiniDepth/requirements.txt
+pip install git+https://github.com/microsoft/MoGe.git
+```
+
 **权重下载**:
 ```bash
 mkdir -p checkpoints/infinidepth

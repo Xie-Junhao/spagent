@@ -90,7 +90,11 @@ def test_infinidepth_rejects_invalid_upsample(sample_image_path):
     result = tool.call(image_path=sample_image_path, upsample_ratio=0)
 
     assert result["success"] is False
-    assert "upsample_ratio must be positive" in result["error"]
+    assert "upsample_ratio must be a positive integer" in result["error"]
+
+    fractional = tool.call(image_path=sample_image_path, upsample_ratio=1.5)
+    assert fractional["success"] is False
+    assert "upsample_ratio must be a positive integer" in fractional["error"]
 
 
 def test_infinidepth_server_subprocess_path(tmp_path, sample_image_path):
@@ -105,8 +109,10 @@ def test_infinidepth_server_subprocess_path(tmp_path, sample_image_path):
         "\n".join(
             [
                 "from pathlib import Path",
+                "import sys",
                 "from PIL import Image",
-                "out = Path('example_data/pred_depth')",
+                "arg = next(v for v in sys.argv if v.startswith('--depth_output_dir='))",
+                "out = Path(arg.split('=', 1)[1])",
                 "out.mkdir(parents=True, exist_ok=True)",
                 "Image.new('L', (16, 12), color=128).save(out / 'fake_depth.png')",
             ]
@@ -125,6 +131,8 @@ def test_infinidepth_server_subprocess_path(tmp_path, sample_image_path):
     assert result["success"] is True
     assert result["depth_image"]
     assert result["colored_depth_image"]
+    assert result["shape"] == [12, 16]
+    assert result["depth_shape"] == [12, 16]
 
 
 @pytest.mark.skipif(
