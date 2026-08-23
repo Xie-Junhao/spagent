@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import numpy as np
 from PIL import Image
 
 project_root = Path(__file__).parent.parent
@@ -110,6 +111,35 @@ def test_wilddet3d_rejects_empty_prompt(sample_image_path):
 
     assert result["success"] is False
     assert "Provide at least one prompt" in result["error"]
+
+
+def test_wilddet3d_server_filters_on_combined_score_and_keeps_3d_scores_aligned():
+    from spagent.external_experts.WildDet3D.wilddet3d_server import _filter_by_score
+
+    filtered = _filter_by_score(
+        boxes_2d=np.array([[1, 2, 10, 12], [3, 4, 20, 24]], dtype=np.float32),
+        boxes_3d=np.arange(20, dtype=np.float32).reshape(2, 10),
+        scores=np.array([0.2, 0.8], dtype=np.float32),
+        scores_2d=np.array([0.9, 0.9], dtype=np.float32),
+        scores_3d=np.array([0.7, 0.6], dtype=np.float32),
+        class_ids=np.array([0, 1]),
+        threshold=0.3,
+    )
+
+    boxes_2d, boxes_3d, scores, scores_2d, scores_3d, class_ids = filtered
+    assert boxes_2d.shape == (1, 4)
+    assert boxes_3d.shape == (1, 10)
+    assert scores.tolist() == pytest.approx([0.8])
+    assert scores_2d.tolist() == pytest.approx([0.9])
+    assert scores_3d.tolist() == pytest.approx([0.6])
+    assert class_ids.tolist() == [1]
+
+
+def test_wilddet3d_server_maps_class_ids_to_detection_labels():
+    from spagent.external_experts.WildDet3D.wilddet3d_server import _detection_class_names
+
+    labels = _detection_class_names(["chair", "table"], np.array([1, 0, 1]), 3)
+    assert labels == ["table", "chair", "table"]
 
 
 @pytest.mark.skipif(

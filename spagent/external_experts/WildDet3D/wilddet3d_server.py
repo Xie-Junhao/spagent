@@ -2,7 +2,10 @@ import argparse
 import base64
 import io
 import logging
+import os
+import sys
 import traceback
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -43,11 +46,24 @@ draw_3d_boxes_fn = None
 model_name = "wilddet3d"
 
 
-def load_model(checkpoint_path: str, score_threshold: float = 0.3) -> bool:
+def load_model(
+    checkpoint_path: str,
+    score_threshold: float = 0.3,
+    repo_path: Optional[str] = None,
+) -> bool:
     global model, preprocess_fn, draw_3d_boxes_fn, model_name
     try:
         if torch is None:
             raise ImportError("WildDet3D server requires torch in the model-serving environment")
+        checkpoint = Path(checkpoint_path).expanduser().resolve()
+        if not checkpoint.is_file():
+            raise FileNotFoundError(f"WildDet3D checkpoint not found: {checkpoint}")
+        if repo_path:
+            repo = Path(repo_path).expanduser().resolve()
+            if not (repo / "wilddet3d" / "__init__.py").is_file():
+                raise FileNotFoundError(f"Invalid WildDet3D repository path: {repo}")
+            if str(repo) not in sys.path:
+                sys.path.insert(0, str(repo))
         from wilddet3d import build_model, preprocess
 
         try:
@@ -55,13 +71,13 @@ def load_model(checkpoint_path: str, score_threshold: float = 0.3) -> bool:
         except Exception:
             draw_3d_boxes = None
 
-        model = _build_model(build_model, checkpoint_path, score_threshold)
+        model = _build_model(build_model, str(checkpoint), score_threshold)
         if hasattr(model, "eval"):
             model.eval()
         preprocess_fn = preprocess
         draw_3d_boxes_fn = draw_3d_boxes
-        model_name = checkpoint_path
-        logger.info("WildDet3D model loaded: %s", checkpoint_path)
+        model_name = str(checkpoint)
+        logger.info("WildDet3D model loaded: %s", checkpoint)
         return True
     except Exception as e:
         logger.error("Failed to load WildDet3D: %s", e)
@@ -118,8 +134,22 @@ def infer():
             points=points,
             score_threshold=float(data.get("score_threshold", 0.3)),
         )
-        boxes_2d, boxes_3d, scores, scores_2d, class_ids, depth_maps, intrinsics = outputs
-        class_names = _class_names(text_prompt, boxes, points, class_ids)
+        (
+            boxes_2d,
+            boxes_3d,
+            scores,
+            scores_2d,
+            scores_3d,
+            class_ids,
+            depth_maps,
+            original_intrinsics,
+        ) = outputs
+        class_vocabulary = _class_vocabulary(text_prompt)
+        class_names = _detection_class_names(
+            class_vocabulary,
+            class_ids,
+            len(_to_list(boxes_2d)),
+        )
 
         response: Dict[str, Any] = {
             "success": True,
@@ -137,11 +167,11 @@ def infer():
                 image,
                 boxes_2d,
                 boxes_3d,
-                scores,
                 scores_2d,
+                scores_3d,
                 class_ids,
-                class_names,
-                intrinsics,
+                class_vocabulary,
+                original_intrinsics,
             )
 
         return jsonify(response)
@@ -190,16 +220,25 @@ def _run_wilddet3d(
     scores_2d = _first_batch(scores_2d)
     scores_3d = _first_batch(scores_3d)
     class_ids = _first_batch(class_ids)
-    scores_out = scores_3d if scores_3d is not None else scores
-    boxes_2d, boxes_3d, scores_out, scores_2d, class_ids = _filter_by_score(
+    boxes_2d, boxes_3d, scores, scores_2d, scores_3d, class_ids = _filter_by_score(
         boxes_2d,
         boxes_3d,
-        scores_out,
+        scores,
         scores_2d,
+        scores_3d,
         class_ids,
         score_threshold,
     )
-    return boxes_2d, boxes_3d, scores_out, scores_2d, class_ids, depth_maps, data["intrinsics"]
+    return (
+        boxes_2d,
+        boxes_3d,
+        scores,
+        scores_2d,
+        scores_3d,
+        class_ids,
+        depth_maps,
+        data["original_intrinsics"],
+    )
 
 
 def _first_batch(value):
@@ -216,10 +255,18 @@ def _first_batch(value):
     return value
 
 
-def _filter_by_score(boxes_2d, boxes_3d, scores, scores_2d, class_ids, threshold: float):
+def _filter_by_score(
+    boxes_2d,
+    boxes_3d,
+    scores,
+    scores_2d,
+    scores_3d,
+    class_ids,
+    threshold: float,
+):
     scores_np = _to_numpy(scores)
     if scores_np is None or scores_np.size == 0:
-        return boxes_2d, boxes_3d, scores, scores_2d, class_ids
+        return boxes_2d, boxes_3d, scores, scores_2d, scores_3d, class_ids
     flat = scores_np.reshape(-1)
     keep = np.where(flat >= threshold)[0]
     return (
@@ -227,6 +274,7 @@ def _filter_by_score(boxes_2d, boxes_3d, scores, scores_2d, class_ids, threshold
         _take(boxes_3d, keep),
         _take(scores, keep),
         _take(scores_2d, keep),
+        _take(scores_3d, keep),
         _take(class_ids, keep),
     )
 
@@ -258,15 +306,19 @@ def _split_prompt(prompt: str) -> List[str]:
     return [part.strip() for part in prompt.split(",") if part.strip()] or [prompt]
 
 
-def _class_names(text_prompt, boxes, points, class_ids) -> List[str]:
-    if text_prompt:
-        names = _split_prompt(text_prompt)
-        ids = _to_numpy(class_ids)
-        if ids is not None and ids.size:
-            return [names[int(i) % len(names)] for i in ids.reshape(-1)]
-        return names
-    count = len(boxes or points or [None])
-    return ["object"] * count
+def _class_vocabulary(text_prompt: Optional[str]) -> List[str]:
+    return _split_prompt(text_prompt) if text_prompt else ["object"]
+
+
+def _detection_class_names(
+    vocabulary: List[str],
+    class_ids,
+    detection_count: int,
+) -> List[str]:
+    ids = _to_numpy(class_ids)
+    if ids is not None and ids.size:
+        return [vocabulary[int(i) % len(vocabulary)] for i in ids.reshape(-1)]
+    return [vocabulary[0]] * detection_count
 
 
 def _model_device():
@@ -323,10 +375,10 @@ def _visualize(
     image: Image.Image,
     boxes_2d,
     boxes_3d,
-    scores,
     scores_2d,
+    scores_3d,
     class_ids,
-    class_names: List[str],
+    class_vocabulary: List[str],
     intrinsics,
 ) -> str:
     if draw_3d_boxes_fn is not None:
@@ -339,9 +391,9 @@ def _visualize(
                     boxes3d=_to_numpy(boxes_3d),
                     intrinsics=_to_numpy(intrinsics),
                     scores_2d=_to_numpy(scores_2d),
-                    scores_3d=_to_numpy(scores),
+                    scores_3d=_to_numpy(scores_3d),
                     class_ids=_to_numpy(class_ids),
-                    class_names=class_names,
+                    class_names=class_vocabulary,
                     save_path=output.name,
                     boxes_2d=_to_numpy(boxes_2d),
                     draw_predicted_2d_boxes=True,
@@ -354,11 +406,13 @@ def _visualize(
     canvas = image.copy()
     draw = ImageDraw.Draw(canvas)
     boxes = _to_numpy(boxes_2d)
-    scores_np = _to_numpy(scores)
+    scores_np = _to_numpy(scores_3d)
     if boxes is not None:
         boxes = boxes.reshape((-1, 4))
         for idx, box in enumerate(boxes):
-            label = class_names[idx] if idx < len(class_names) else "object"
+            class_ids_np = _to_numpy(class_ids)
+            class_id = int(class_ids_np.reshape(-1)[idx]) if class_ids_np is not None and class_ids_np.size > idx else 0
+            label = class_vocabulary[class_id % len(class_vocabulary)]
             score = float(scores_np.reshape(-1)[idx]) if scores_np is not None and scores_np.size > idx else 0.0
             draw.rectangle(box.tolist(), outline="red", width=3)
             draw.text((float(box[0]) + 3, max(0, float(box[1]) - 14)), f"{label} {score:.2f}", fill="red")
@@ -374,10 +428,20 @@ def _encode_png(image: Image.Image) -> str:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="WildDet3D Promptable 3D Detection Server")
     parser.add_argument("--checkpoint_path", type=str, required=True, help="Path to WildDet3D checkpoint")
+    parser.add_argument(
+        "--repo_path",
+        type=str,
+        default=os.environ.get("WILDDET3D_REPO_PATH"),
+        help="Path to the cloned allenai/WildDet3D repository",
+    )
     parser.add_argument("--port", type=int, default=20027, help="Port to run the server on")
     parser.add_argument("--score_threshold", type=float, default=0.3, help="Default score threshold")
     args = parser.parse_args()
 
-    if not load_model(checkpoint_path=args.checkpoint_path, score_threshold=args.score_threshold):
+    if not load_model(
+        checkpoint_path=args.checkpoint_path,
+        score_threshold=args.score_threshold,
+        repo_path=args.repo_path,
+    ):
         raise SystemExit(1)
     app.run(host="0.0.0.0", port=args.port, debug=False)

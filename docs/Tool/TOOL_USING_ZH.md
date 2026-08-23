@@ -1285,9 +1285,13 @@ WildDet3D/
 └── __init__.py
 ```
 
-**权重下载**:
+**安装并下载权重**:
 ```bash
-pip install flask
+git clone --recurse-submodules https://github.com/allenai/WildDet3D.git third_party/WildDet3D
+pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
+pip install vis4d==1.0.0
+pip install git+https://github.com/SysCV/vis4d_cuda_ops.git --no-build-isolation --no-cache-dir
+pip install -r third_party/WildDet3D/requirements.txt flask
 mkdir -p checkpoints/wilddet3d
 hf download allenai/WildDet3D wilddet3d_alldata_all_prompt_v1.0.pt \
   --local-dir checkpoints/wilddet3d
@@ -1296,6 +1300,7 @@ hf download allenai/WildDet3D wilddet3d_alldata_all_prompt_v1.0.pt \
 **启动服务**:
 ```bash
 python spagent/external_experts/WildDet3D/wilddet3d_server.py \
+  --repo_path third_party/WildDet3D \
   --checkpoint_path checkpoints/wilddet3d/wilddet3d_alldata_all_prompt_v1.0.pt \
   --port 20027
 ```
@@ -1364,6 +1369,7 @@ python spagent/external_experts/GroundingDINO/grounding_dino_server.py \
 
 # WildDet3D 可提示3D目标检测服务
 python spagent/external_experts/WildDet3D/wilddet3d_server.py \
+  --repo_path third_party/WildDet3D \
   --checkpoint_path checkpoints/wilddet3d/wilddet3d_alldata_all_prompt_v1.0.pt \
   --port 20027
 
