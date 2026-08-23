@@ -62,9 +62,10 @@ def health_check():
     script = repo / "inference_depth.py"
     model_path = Path(config.get("depth_model_path", ""))
     moge2_model_path = Path(config["moge2_model_path"]) if config.get("moge2_model_path") else None
+    moge_ready = moge2_model_path is None or moge2_model_path.exists()
     return jsonify(
         {
-            "status": "healthy" if script.exists() and model_path.exists() else "unhealthy",
+            "status": "healthy" if script.exists() and model_path.exists() and moge_ready else "unhealthy",
             "repo_path": str(repo),
             "script_exists": script.exists(),
             "depth_model_path": str(model_path),
@@ -85,11 +86,7 @@ def infer():
         image = _decode_image(data["image"])
         filename = data.get("filename") or "input.png"
         save_pcd = bool(data.get("save_pcd", False))
-        upsample_ratio = float(data.get("upsample_ratio", 2))
-        if upsample_ratio <= 0:
-            return jsonify({"success": False, "error": "upsample_ratio must be positive"}), 400
-        if upsample_ratio.is_integer():
-            upsample_ratio = int(upsample_ratio)
+        upsample_ratio = _positive_integer(data.get("upsample_ratio", 2), "upsample_ratio")
 
         with tempfile.TemporaryDirectory(prefix="infinidepth_") as tmp:
             tmp_dir = Path(tmp)
@@ -102,6 +99,7 @@ def infer():
                 run_dir=run_dir,
                 save_pcd=save_pcd,
                 upsample_ratio=upsample_ratio,
+                source_shape=[image.height, image.width],
             )
             return jsonify(result)
     except Exception as e:
@@ -110,7 +108,13 @@ def infer():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
-def _run_infinidepth(input_path: Path, run_dir: Path, save_pcd: bool, upsample_ratio: float) -> Dict[str, Any]:
+def _run_infinidepth(
+    input_path: Path,
+    run_dir: Path,
+    save_pcd: bool,
+    upsample_ratio: int,
+    source_shape=None,
+) -> Dict[str, Any]:
     repo = Path(config["repo_path"])
     script = repo / "inference_depth.py"
     if not script.exists():
@@ -151,7 +155,7 @@ def _run_infinidepth(input_path: Path, run_dir: Path, save_pcd: bool, upsample_r
             "command": command,
         }
 
-    files = _collect_outputs(repo, input_path, run_dir)
+    files = _collect_outputs(run_dir)
     if files.get("depth") is None and files.get("colored_depth") is None:
         return {
             "success": False,
@@ -166,6 +170,11 @@ def _run_infinidepth(input_path: Path, run_dir: Path, save_pcd: bool, upsample_r
         "stdout": completed.stdout[-2000:],
         "stderr": completed.stderr[-2000:],
     }
+    depth_artifact = files.get("depth") or files.get("colored_depth")
+    if depth_artifact:
+        with Image.open(depth_artifact) as depth_image:
+            response["depth_shape"] = [depth_image.height, depth_image.width]
+    response["shape"] = list(source_shape or response.get("depth_shape") or [])
     if files.get("depth"):
         response["depth_image"] = _encode_file(files["depth"])
     if files.get("colored_depth"):
@@ -177,11 +186,8 @@ def _run_infinidepth(input_path: Path, run_dir: Path, save_pcd: bool, upsample_r
     return response
 
 
-def _collect_outputs(repo: Path, input_path: Path, run_dir: Path) -> Dict[str, Optional[Path]]:
-    candidates = []
-    for root in [run_dir, repo / "example_data" / "pred_depth", repo / "example_data" / "pred_pcd", input_path.parent]:
-        if root.exists():
-            candidates.extend([p for p in root.rglob("*") if p.is_file()])
+def _collect_outputs(run_dir: Path) -> Dict[str, Optional[Path]]:
+    candidates = [p for p in run_dir.rglob("*") if p.is_file()] if run_dir.exists() else []
     candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
 
     outputs: Dict[str, Optional[Path]] = {"depth": None, "colored_depth": None, "point_cloud": None}
@@ -206,6 +212,13 @@ def _decode_image(image_b64: str) -> Image.Image:
 
 def _encode_file(path: Path) -> str:
     return base64.b64encode(path.read_bytes()).decode("utf-8")
+
+
+def _positive_integer(value, name: str) -> int:
+    number = float(value)
+    if number <= 0 or not number.is_integer():
+        raise ValueError(f"{name} must be a positive integer")
+    return int(number)
 
 
 if __name__ == "__main__":

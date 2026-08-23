@@ -33,7 +33,7 @@ class InfiniDepthClient:
         self,
         image_path: str,
         save_pcd: bool = False,
-        upsample_ratio: float = 2,
+        upsample_ratio: int = 2,
         output_dir: Optional[str] = None,
     ) -> Dict[str, Any]:
         path = Path(image_path)

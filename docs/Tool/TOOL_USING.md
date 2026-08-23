@@ -1608,6 +1608,14 @@ The default model is `qwen-image-2.0`. `image_path` and reference images may be 
 - Optional point cloud export
 - Uses the official InfiniDepth inference script through a local server
 
+**Official Source**:
+```bash
+git clone https://github.com/zju3dv/InfiniDepth.git third_party/InfiniDepth
+git -C third_party/InfiniDepth checkout 36c6e0c31887fafc210184ee43ca475230704095
+pip install -r third_party/InfiniDepth/requirements.txt
+pip install git+https://github.com/microsoft/MoGe.git
+```
+
 **Weight Download**:
 ```bash
 mkdir -p checkpoints/infinidepth

@@ -69,7 +69,8 @@ class InfiniDepthTool(Tool):
                     "default": False,
                 },
                 "upsample_ratio": {
-                    "type": "number",
+                    "type": "integer",
+                    "minimum": 1,
                     "description": "Depth output upsample ratio passed to the backend.",
                     "default": 2,
                 },
@@ -83,7 +84,7 @@ class InfiniDepthTool(Tool):
         image_path: str,
         task: str = "depth",
         save_pcd: bool = False,
-        upsample_ratio: float = 2,
+        upsample_ratio: int = 2,
         output_dir: Optional[str] = None,
     ) -> Dict[str, Any]:
         try:
@@ -92,11 +93,13 @@ class InfiniDepthTool(Tool):
                 return ToolResult.fail(f"Image file not found: {image_path}", category=DEPTH)
             if task != "depth":
                 return ToolResult.fail("InfiniDepthTool v1 only supports task='depth'.", category=DEPTH)
-            upsample_ratio = float(upsample_ratio)
-            if upsample_ratio <= 0:
-                return ToolResult.fail("upsample_ratio must be positive.", category=DEPTH)
-            if upsample_ratio.is_integer():
-                upsample_ratio = int(upsample_ratio)
+            upsample_value = float(upsample_ratio)
+            if upsample_value <= 0 or not upsample_value.is_integer():
+                return ToolResult.fail(
+                    "upsample_ratio must be a positive integer.",
+                    category=DEPTH,
+                )
+            upsample_ratio = int(upsample_value)
 
             result = self._client.infer(
                 image_path=str(path),
@@ -120,6 +123,7 @@ class InfiniDepthTool(Tool):
                     result=result,
                     colored_depth_path=result.get("colored_depth_path"),
                     point_cloud_path=result.get("point_cloud_path"),
+                    depth_shape=result.get("depth_shape"),
                     output_dir=result.get("output_dir"),
                 )
 
