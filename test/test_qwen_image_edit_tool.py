@@ -103,7 +103,7 @@ def test_mock_multi_image_fusion_and_multiple_outputs(source_images, tmp_path):
     for output_path in result["image_paths"]:
         with Image.open(output_path) as output:
             assert output.size == (512, 512)
-    assert render(result, tool_name=tool.name).images == result["image_paths"]
+    assert render(result, tool_name=tool.name).images == [result["output_path"]]
 
 
 @pytest.mark.parametrize(

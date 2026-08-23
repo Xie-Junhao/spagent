@@ -64,7 +64,6 @@ BOX_CXCYWH_NORM = "cxcywh_norm"
 # Envelope visualization keys, in the order the renderer attaches them
 VISUALIZATION_KEYS: Tuple[str, ...] = (
     "output_path",
-    "image_paths",
     "vis_path",
     "overlay_path",
     "crop_paths",
@@ -650,17 +649,12 @@ class ToolResult(dict):
 def visualization_paths(result: Mapping) -> List[str]:
     """Existing visualization files, deduped, in envelope order.
 
-    Also consumes ``image_paths`` from multi-image generation payloads.
-    ``.mp4`` paths are returned as-is; the caller handles frame extraction.
+    Consumes all four envelope keys, including ``overlay_path`` (which the
+    legacy agent loop ignored). ``.mp4`` paths are returned as-is; the caller
+    handles frame extraction.
     """
     seen: List[str] = []
-    output_path = result.get("output_path")
-    if output_path and Path(output_path).exists():
-        seen.append(output_path)
-    for p in result.get("image_paths") or []:
-        if p and Path(p).exists() and p not in seen:
-            seen.append(p)
-    for key in ("vis_path", "overlay_path"):
+    for key in ("output_path", "vis_path", "overlay_path"):
         p = result.get(key)
         if p and Path(p).exists() and p not in seen:
             seen.append(p)

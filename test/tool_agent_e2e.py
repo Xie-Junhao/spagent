@@ -73,6 +73,13 @@ EPISODE_PROMPTS = {
     "image_generation": "Generate an image of a dog running on a beach using the available tool and report where it was saved.",
 }
 
+TOOL_EPISODE_PROMPTS = {
+    "qwen_image_edit": (
+        "Edit this image so the dog wears blue sunglasses. Preserve the dog, "
+        "pose, and background, and use the available tool."
+    ),
+}
+
 
 # ---------------------------------------------------------------------------
 # Provider adapters (all implement the SPAgent Model interface)
@@ -212,7 +219,11 @@ def run_episode(entry, model, url, prompt):
         return False, [f"tool build failed: {'; '.join(errs)}"[:150]]
     tool = tools[0]
 
-    prompt = prompt or EPISODE_PROMPTS.get(entry.category)
+    prompt = (
+        prompt
+        or TOOL_EPISODE_PROMPTS.get(entry.key)
+        or EPISODE_PROMPTS.get(entry.category)
+    )
     if not prompt:
         return False, [f"no default episode prompt for category {entry.category!r} "
                        "(e.g. video_generation is paid) — pass --prompt to run anyway"]
@@ -220,7 +231,10 @@ def run_episode(entry, model, url, prompt):
     images = IMG
     if entry.category == "optical_flow":
         images = [IMG, IMG]
-    if entry.category == "image_generation":
+    if (
+        entry.category == "image_generation"
+        and entry.key not in TOOL_EPISODE_PROMPTS
+    ):
         images = None
 
     agent = SPAgent(model=model, tools=[tool])
