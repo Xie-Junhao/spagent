@@ -134,19 +134,29 @@ class MockSAM3Service:
 
         boxes = self._boxes_for_prompt(text_prompt, width, height, max(1, min(int(max_instances), 2)))
         frame_count = 0
+        mask_dir = Path(self.output_dir) / f"sam3_mock_video_{stem}_{timestamp}_masks"
+        mask_dir.mkdir(parents=True, exist_ok=True)
+        frame_masks = []
         while True:
             ret, frame = cap.read()
             if not ret:
                 break
             overlay = frame.copy()
+            mask_paths = []
             for idx, box in enumerate(boxes):
                 color = self._color(idx)[:3][::-1]
                 x1, y1, x2, y2 = box
                 cv2.rectangle(overlay, (x1, y1), (x2, y2), color, -1)
                 cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+                mask = np.zeros((height, width), dtype=np.uint8)
+                cv2.rectangle(mask, (x1, y1), (x2, y2), 255, -1)
+                mask_path = mask_dir / f"frame_{frame_count:06d}_instance_{idx:03d}.png"
+                cv2.imwrite(str(mask_path), mask)
+                mask_paths.append(str(mask_path))
             frame = cv2.addWeighted(overlay, 0.35, frame, 0.65, 0)
             cv2.putText(frame, text_prompt, (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
             writer.write(frame)
+            frame_masks.append({"frame_index": frame_count, "mask_paths": mask_paths})
             frame_count += 1
 
         cap.release()
@@ -163,7 +173,9 @@ class MockSAM3Service:
             "frame_index": int(frame_index),
             "boxes": [list(box) for box in boxes],
             "scores": [round(max(float(score_threshold), 0.72 - i * 0.08), 4) for i in range(len(boxes))],
-            "masks": [],
+            "masks": frame_masks,
+            "frame_mask_paths": [path for record in frame_masks for path in record["mask_paths"]],
+            "mask_frames_dir": str(mask_dir),
         }
 
     def _boxes_for_prompt(self, text_prompt: str, width: int, height: int, count: int) -> List[Tuple[int, int, int, int]]:

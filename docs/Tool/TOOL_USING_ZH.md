@@ -169,7 +169,8 @@ wget https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_small
 
 **特点**:
 - 支持图像和视频的文本提示概念分割
-- 返回 masks、bounding boxes、scores 和可选 overlay 可视化
+- 图像调用返回组合 `mask_path`，原始 boxes 和 scores 保存在 `result` 中
+- 视频调用在 `output_path` 返回 overlay MP4，并通过逐帧 `masks` 记录返回 `frame_index` 和本地 `mask_paths`
 
 **文件结构**:
 ```
@@ -204,7 +205,14 @@ result = tool.call(
     text_prompt="dog",
     task="image",
 )
-print(result["boxes"], result["scores"], result["output_path"])
+print(result["mask_path"], result["result"]["boxes"], result["output_path"])
+
+video_result = tool.call(
+    image_path="input.mp4",
+    text_prompt="dog",
+    task="video",
+)
+print(video_result["output_path"], video_result["masks"])
 ```
 
 **资源链接**:

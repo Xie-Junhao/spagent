@@ -177,7 +177,8 @@ wget https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_small
 
 **Features**:
 - Text-prompt concept segmentation for images and videos
-- Returns masks, bounding boxes, scores, and optional overlay visualizations
+- Image calls return a combined `mask_path`; raw boxes and scores remain under `result`
+- Video calls return an overlay MP4 in `output_path` and frame-indexed `masks` records containing `frame_index` and local `mask_paths`
 
 **File Structure**:
 ```
@@ -212,7 +213,14 @@ result = tool.call(
     text_prompt="dog",
     task="image",
 )
-print(result["boxes"], result["scores"], result["output_path"])
+print(result["mask_path"], result["result"]["boxes"], result["output_path"])
+
+video_result = tool.call(
+    image_path="input.mp4",
+    text_prompt="dog",
+    task="video",
+)
+print(video_result["output_path"], video_result["masks"])
 ```
 
 **Resources**:

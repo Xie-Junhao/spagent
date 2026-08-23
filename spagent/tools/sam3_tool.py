@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 _ENVELOPE_KEYS = {
     "success", "description", "error", "category", "payload",
-    "output_path", "vis_path", "overlay_path", "crop_paths",
+    "output_path", "vis_path", "overlay_path", "crop_paths", "boxes",
 }
 
 
@@ -153,9 +153,16 @@ class SAM3Tool(Tool):
                 elif masks:
                     payload = SegmentationPayload(masks=masks)
 
-                description = result.get("description") or (
-                    f"SAM3 segmented '{text_prompt.strip()}' in the {resolved_task} input."
-                )
+                if resolved_task == "video":
+                    description = result.get("description") or (
+                        f"SAM3 segmented '{text_prompt.strip()}' across "
+                        f"{result.get('frames', 0)} video frame(s). The overlay MP4 is "
+                        "in output_path and masks contains frame-indexed mask paths."
+                    )
+                else:
+                    description = result.get("description") or (
+                        f"SAM3 segmented '{text_prompt.strip()}' in the image."
+                    )
                 extras = {key: value for key, value in raw.items() if key not in _ENVELOPE_KEYS}
                 return ToolResult(
                     success=True,

@@ -212,7 +212,12 @@ def infer_video():
             ):
                 outputs_per_frame[response["frame_index"]] = response.get("outputs", {})
 
-        output_path, stats = _render_video_overlay(temp_path, outputs_per_frame, text_prompt)
+        output_path, stats, frame_masks = _render_video_overlay(
+            temp_path,
+            outputs_per_frame,
+            text_prompt,
+            max_instances=max(1, int(data.get("max_instances", 20))),
+        )
         with open(output_path, "rb") as f:
             video_b64 = base64.b64encode(f.read()).decode("utf-8")
 
@@ -226,6 +231,7 @@ def infer_video():
                 "fps": stats["fps"],
                 "size": stats["size"],
                 "frame_index": frame_index,
+                "frame_masks": frame_masks,
             }
         )
     except Exception as e:
@@ -304,7 +310,12 @@ def _encode_mask(mask: np.ndarray) -> str:
     return base64.b64encode(buffer.tobytes()).decode("utf-8")
 
 
-def _render_video_overlay(video_path: str, outputs_per_frame: Dict, text_prompt: str):
+def _render_video_overlay(
+    video_path: str,
+    outputs_per_frame: Dict,
+    text_prompt: str,
+    max_instances: int = 20,
+):
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise ValueError(f"Unable to open temporary video: {video_path}")
@@ -321,23 +332,37 @@ def _render_video_overlay(video_path: str, outputs_per_frame: Dict, text_prompt:
         raise ValueError("Unable to create output video")
 
     frame_idx = 0
+    frame_mask_records = []
     while True:
         ret, frame = cap.read()
         if not ret:
             break
         frame_outputs = outputs_per_frame.get(frame_idx, {})
-        frame = _overlay_frame(frame, frame_outputs)
+        masks = _extract_video_masks(frame_outputs)[:max_instances]
+        frame = _overlay_frame(frame, masks)
+        frame_mask_records.append(
+            {
+                "frame_index": frame_idx,
+                "masks": [
+                    {"instance_id": instance_idx, "mask": _encode_mask(mask)}
+                    for instance_idx, mask in enumerate(masks)
+                ],
+            }
+        )
         cv2.putText(frame, text_prompt, (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
         writer.write(frame)
         frame_idx += 1
 
     cap.release()
     writer.release()
-    return output_path, {"frames": frame_idx, "fps": fps, "size": [width, height]}
+    return (
+        output_path,
+        {"frames": frame_idx, "fps": fps, "size": [width, height]},
+        frame_mask_records,
+    )
 
 
-def _overlay_frame(frame: np.ndarray, frame_outputs):
-    masks = _extract_video_masks(frame_outputs)
+def _overlay_frame(frame: np.ndarray, masks: List[np.ndarray]):
     overlay = frame.copy()
     for idx, mask in enumerate(masks):
         if mask.shape[:2] != frame.shape[:2]:

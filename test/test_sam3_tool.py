@@ -61,7 +61,8 @@ def test_sam3_mock_image_segmentation(sample_image_path):
     assert result["output_path"] is not None
     assert os.path.exists(result["output_path"])
     assert result["masks"]
-    assert result["boxes"]
+    assert "boxes" not in result
+    assert result["result"]["boxes"]
     assert result["scores"]
 
 
@@ -109,6 +110,15 @@ def test_sam3_mock_video_segmentation(tmp_path):
     assert result["video_path"] is not None
     assert os.path.exists(result["video_path"])
     assert result["frames"] == 4
+    assert "boxes" not in result
+    assert len(result["masks"]) == 4
+    assert [record["frame_index"] for record in result["masks"]] == [0, 1, 2, 3]
+    assert all(record["mask_paths"] for record in result["masks"])
+    assert all(
+        Path(mask_path).is_file()
+        for record in result["masks"]
+        for mask_path in record["mask_paths"]
+    )
 
 
 def test_sam3_server_extracts_official_video_mask_key():
@@ -145,4 +155,4 @@ def test_sam3_real_service(sample_image_path):
     )
 
     assert result["success"] is True
-    assert result["boxes"] is not None
+    assert result["result"]["boxes"] is not None
