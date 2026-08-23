@@ -52,6 +52,7 @@ class MockLingBotMapService:
             "preview_path": str(preview_path),
             "trajectory_path": str(trajectory_path),
             "point_cloud_path": str(point_cloud_path),
+            "points_count": 4,
             "viewer_url": "http://127.0.0.1:8080",
             "num_frames": len(frames),
             "mask_sky": bool(mask_sky),
