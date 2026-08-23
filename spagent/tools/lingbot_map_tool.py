@@ -21,7 +21,7 @@ MIN_REAL_FRAMES = 8
 
 
 class LingBotMapTool(Tool):
-    """Tool for building an interactive 3D map from an image sequence using LingBot-Map."""
+    """Tool for reconstructing a 3D point cloud and camera trajectory with LingBot-Map."""
 
     def __init__(
         self,
@@ -32,8 +32,8 @@ class LingBotMapTool(Tool):
         super().__init__(
             name="lingbot_map_tool",
             description=(
-                "Build an interactive 3D scene map from an ordered image sequence using LingBot-Map. "
-                "Input can be either an image folder or an explicit list of image paths."
+                "Reconstruct a 3D scene from an ordered image sequence using LingBot-Map. "
+                "Returns point-cloud, camera-trajectory, and preview artifacts."
             ),
         )
         self.use_mock = use_mock
@@ -91,8 +91,8 @@ class LingBotMapTool(Tool):
                 },
                 "wait_for_completion": {
                     "type": "boolean",
-                    "description": "Wait for the backend command to finish and collect files. Use false for interactive viewer mode.",
-                    "default": False,
+                    "description": "Wait for reconstruction and return PLY and trajectory artifacts.",
+                    "default": True,
                 },
             },
             "oneOf": [{"required": ["image_folder"]}, {"required": ["image_paths"]}],
@@ -106,9 +106,14 @@ class LingBotMapTool(Tool):
         keyframe_interval: int = 1,
         max_frames: int = 128,
         output_dir: Optional[str] = None,
-        wait_for_completion: bool = False,
+        wait_for_completion: bool = True,
     ) -> Dict[str, Any]:
         try:
+            if not wait_for_completion:
+                return ToolResult.fail(
+                    "LingBotMapTool requires wait_for_completion=True so it can return reconstruction artifacts.",
+                    category=RECONSTRUCTION_3D,
+                )
             valid, error, normalized_paths = self._validate_inputs(
                 image_folder=image_folder,
                 image_paths=image_paths,
@@ -142,8 +147,13 @@ class LingBotMapTool(Tool):
                     "process_id": result.get("process_id"),
                     "log_path": result.get("log_path"),
                     "command": result.get("command"),
+                    "metadata_path": result.get("metadata_path"),
+                    "points_count": result.get("points_count"),
                 }
-                description = f"LingBot-Map accepted {result.get('num_frames', 0)} frame(s) for mapping."
+                description = (
+                    f"LingBot-Map reconstructed {result.get('num_frames', 0)} frame(s) "
+                    f"into {result.get('points_count', 0)} 3D point(s)."
+                )
                 if point_cloud_path:
                     return ToolResult(
                         success=True,
@@ -155,13 +165,9 @@ class LingBotMapTool(Tool):
                         output_path=result.get("preview_path"),
                         **common,
                     )
-                return ToolResult(
-                    success=True,
+                return ToolResult.fail(
+                    "LingBot-Map completed without a point cloud artifact.",
                     category=RECONSTRUCTION_3D,
-                    description=description,
-                    output_path=result.get("preview_path"),
-                    points=[],
-                    **common,
                 )
 
             error_msg = result.get("error", "Unknown error") if result else "No result returned"

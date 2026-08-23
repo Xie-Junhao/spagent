@@ -1,9 +1,9 @@
 import argparse
 import base64
 import io
+import json
 import logging
 import os
-import shutil
 import subprocess
 import tempfile
 import time
@@ -52,6 +52,7 @@ def configure(
     work_dir: Optional[str] = None,
     use_sdpa: bool = True,
     camera_num_iterations: int = 1,
+    runner_path: Optional[str] = None,
 ) -> None:
     global config
     config = {
@@ -63,6 +64,7 @@ def configure(
         "work_dir": work_dir or str(Path(tempfile.gettempdir()) / "spagent_lingbot_map_server"),
         "use_sdpa": bool(use_sdpa),
         "camera_num_iterations": max(1, int(camera_num_iterations)),
+        "runner_path": str(Path(runner_path).resolve()) if runner_path else str(_default_runner_path()),
     }
     Path(config["work_dir"]).mkdir(parents=True, exist_ok=True)
 
@@ -74,11 +76,12 @@ def health_check():
     model_path = Path(config.get("model_path", ""))
     return jsonify(
         {
-            "status": "healthy" if script.exists() and model_path.exists() else "unhealthy",
+            "status": "healthy" if script.exists() and model_path.exists() and _runner_path().exists() else "unhealthy",
             "repo_path": str(repo),
             "demo_exists": script.exists(),
             "model_path": str(model_path),
             "model_exists": model_path.exists(),
+            "runner_exists": _runner_path().exists(),
             "viewer_url": _viewer_url(),
             "use_sdpa": config.get("use_sdpa", True),
             "camera_num_iterations": config.get("camera_num_iterations", 1),
@@ -98,7 +101,7 @@ def infer():
         mask_sky = bool(data.get("mask_sky", False))
         keyframe_interval = max(1, int(data.get("keyframe_interval", 1)))
         max_frames = max(1, int(data.get("max_frames", 128)))
-        wait_for_completion = bool(data.get("wait_for_completion", False))
+        wait_for_completion = bool(data.get("wait_for_completion", True))
 
         output_dir = Path(data.get("output_dir") or Path(config["work_dir"]) / f"run_{int(time.time() * 1000)}")
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -146,14 +149,13 @@ def _prepare_frame_dir(
         if not frames:
             raise ValueError(f"No supported images found in: {image_folder}")
         for idx, frame in enumerate(frames):
-            shutil.copy2(frame, frame_dir / f"{idx:06d}{frame.suffix.lower()}")
+            with Image.open(frame) as image:
+                image.convert("RGB").save(frame_dir / f"{idx:06d}.png", format="PNG")
         return frame_dir
 
     for idx, item in enumerate(images[::keyframe_interval][:max_frames]):
-        filename = Path(item.get("filename") or f"{idx:06d}.png").name
-        suffix = Path(filename).suffix.lower() if Path(filename).suffix else ".png"
         image = _decode_image(item["data"])
-        image.save(frame_dir / f"{idx:06d}{suffix}")
+        image.save(frame_dir / f"{idx:06d}.png", format="PNG")
     if not _list_images(frame_dir):
         raise ValueError("No uploaded images were decoded")
     return frame_dir
@@ -165,7 +167,7 @@ def _run_lingbot_map(
     mask_sky: bool,
     keyframe_interval: int = 1,
     max_frames: int = 128,
-    wait_for_completion: bool = False,
+    wait_for_completion: bool = True,
 ) -> Dict[str, Any]:
     repo = Path(config["repo_path"])
     script = repo / "demo.py"
@@ -176,27 +178,26 @@ def _run_lingbot_map(
         raise FileNotFoundError(f"LingBot-Map checkpoint not found: {model_path}")
 
     log_path = output_dir / "lingbot_map.log"
-    command = [
-        config["python_bin"],
-        str(script),
-        "--model_path",
-        str(model_path),
-        "--image_folder",
-        str(frame_dir),
-        "--port",
-        str(config.get("viewer_port", 8080)),
-        "--keyframe_interval",
-        str(max(1, int(keyframe_interval))),
-        "--camera_num_iterations",
-        str(max(1, int(config.get("camera_num_iterations", 1)))),
-    ]
-    if config.get("use_sdpa", True):
-        command.append("--use_sdpa")
-    if mask_sky:
-        command.append("--mask_sky")
-
-    logger.info("Running LingBot-Map command: %s", " ".join(command))
     if wait_for_completion:
+        command = [
+            config["python_bin"],
+            str(_runner_path()),
+            "--repo_path",
+            str(repo),
+            "--model_path",
+            str(model_path),
+            "--image_folder",
+            str(frame_dir),
+            "--output_dir",
+            str(output_dir),
+            "--camera_num_iterations",
+            str(max(1, int(config.get("camera_num_iterations", 1)))),
+        ]
+        if config.get("use_sdpa", True):
+            command.append("--use_sdpa")
+        if mask_sky:
+            command.append("--mask_sky")
+        logger.info("Running LingBot-Map export command: %s", " ".join(command))
         completed = subprocess.run(
             command,
             cwd=repo,
@@ -216,18 +217,52 @@ def _run_lingbot_map(
                 "log_path": str(log_path),
             }
         result = _collect_outputs(output_dir)
+        if not result.get("point_cloud_path") or not result.get("trajectory_path"):
+            return {
+                "success": False,
+                "error": "LingBot-Map completed without a point cloud and trajectory",
+                "command": command,
+                "output_dir": str(output_dir),
+                "log_path": str(log_path),
+            }
+        if not isinstance(result.get("points_count"), int) or result["points_count"] <= 0:
+            return {
+                "success": False,
+                "error": f"LingBot-Map returned invalid points_count: {result.get('points_count')!r}",
+                "command": command,
+                "output_dir": str(output_dir),
+                "log_path": str(log_path),
+            }
         result.update(
             {
                 "success": True,
                 "command": command,
                 "output_dir": str(output_dir),
                 "log_path": str(log_path),
-                "viewer_url": _viewer_url(),
                 "wait_for_completion": True,
             }
         )
         return result
 
+    command = [
+        config["python_bin"],
+        str(script),
+        "--model_path",
+        str(model_path),
+        "--image_folder",
+        str(frame_dir),
+        "--port",
+        str(config.get("viewer_port", 8080)),
+        "--keyframe_interval",
+        str(max(1, int(keyframe_interval))),
+        "--camera_num_iterations",
+        str(max(1, int(config.get("camera_num_iterations", 1)))),
+    ]
+    if config.get("use_sdpa", True):
+        command.append("--use_sdpa")
+    if mask_sky:
+        command.append("--mask_sky")
+    logger.info("Running LingBot-Map viewer command: %s", " ".join(command))
     with log_path.open("ab") as log_file:
         process = subprocess.Popen(
             command,
@@ -257,6 +292,13 @@ def _collect_outputs(output_dir: Path) -> Dict[str, Any]:
         files.append(path)
     files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     result: Dict[str, Any] = {}
+    metadata_path = output_dir / "reconstruction_metadata.json"
+    if metadata_path.is_file():
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        result["metadata_path"] = str(metadata_path)
+        result["points_count"] = metadata.get("points_count")
+        result["checkpoint_path"] = metadata.get("checkpoint_path")
+        result["checkpoint_bytes"] = metadata.get("checkpoint_bytes")
     for path in files:
         suffix = path.suffix.lower()
         name = path.name.lower()
@@ -272,6 +314,8 @@ def _collect_outputs(output_dir: Path) -> Dict[str, Any]:
         elif "video_path" not in result and suffix == ".mp4":
             result["video"] = _encode_file(path)
             result["video_path"] = str(path)
+    if result.get("points_count") is None and result.get("point_cloud_path"):
+        result["points_count"] = _points_count_from_ply(Path(result["point_cloud_path"]))
     return result
 
 
@@ -289,6 +333,25 @@ def _encode_file(path: Path) -> str:
 
 def _viewer_url() -> str:
     return f"http://{config.get('viewer_host', '127.0.0.1')}:{config.get('viewer_port', 8080)}"
+
+
+def _runner_path() -> Path:
+    return Path(config.get("runner_path") or _default_runner_path())
+
+
+def _default_runner_path() -> Path:
+    return Path(__file__).with_name("lingbot_map_runner.py")
+
+
+def _points_count_from_ply(path: Path) -> Optional[int]:
+    with path.open("rb") as stream:
+        for raw_line in stream:
+            line = raw_line.decode("ascii", errors="ignore").strip()
+            if line.startswith("element vertex "):
+                return int(line.rsplit(" ", 1)[-1])
+            if line == "end_header":
+                break
+    return None
 
 
 if __name__ == "__main__":

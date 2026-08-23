@@ -37,7 +37,7 @@ class LingBotMapClient:
         keyframe_interval: int = 1,
         max_frames: int = 128,
         output_dir: Optional[str] = None,
-        wait_for_completion: bool = False,
+        wait_for_completion: bool = True,
     ) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
             "mask_sky": bool(mask_sky),

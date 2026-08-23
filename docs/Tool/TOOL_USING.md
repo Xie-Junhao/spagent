@@ -65,7 +65,7 @@ external_experts/
 | **FlowSeek** | `FlowSeekTool` | Optical Flow Estimation | Estimate dense per-pixel motion between two images (consecutive frames or before/after pairs); returns colorized flow visualization; M variant (ViT-B) or T variant (ViT-S); source vendored in repo, requires `FLOWSEEK_CHECKPOINT` and `FLOWSEEK_DAV2_CHECKPOINT` env vars | Local / Server (port 20036) | `image1_path`, `image2_path`, `output_path`(optional) |
 | **PaddleOCR-VL-1.5** | `PaddleOCRVLTool` | Document OCR & Structured Recognition | 0.9B VLM for plain OCR, table parsing, chart reading, formula → LaTeX, text spotting, and seal recognition; supports local/server/mock; no checkpoint env var required | Local or Server (port 20037) | `image_path`, `task` ("ocr" / "table" / "chart" / "formula" / "spotting" / "seal") |
 | **OneFormer** | `OneFormerTool` | Universal Image Segmentation | Single model for semantic / instance / panoptic; HF auto-download; returns colorized overlay + mask_path id-map | Local / Server (port 20038) | `image_path`, `task` ("semantic" / "instance" / "panoptic") |
-| **LingBot-Map** | `LingBotMapTool` | Long-sequence 3D Scene Mapping | Build an interactive 3D map from an ordered image folder or image list | Server (port 20040) | `image_folder` or `image_paths`, `mask_sky`, `keyframe_interval`, `max_frames` |
+| **LingBot-Map** | `LingBotMapTool` | Long-sequence 3D Scene Mapping | Reconstruct a point cloud and camera trajectory from an ordered image folder or image list | Server (port 20040) | `image_folder` or `image_paths`, `mask_sky`, `keyframe_interval`, `max_frames` |
 
 **Usage Examples**:
 - For detailed usage examples, please refer to: [Advanced Examples](../Examples/ADVANCED_EXAMPLES.md)
@@ -1553,12 +1553,11 @@ python test/test_tool.py --tool oneformer --image assets/dog.jpeg --seg_task pan
 
 ### 18. LingBot-Map - Long-sequence 3D Scene Mapping
 
-**Function**: Build an interactive 3D scene map from an ordered image sequence using LingBot-Map.
+**Function**: Build a 3D scene map from an ordered image sequence using LingBot-Map.
 
 **Features**:
 - Supports image folders and explicit image path lists
-- Starts the LingBot-Map viewer workflow through a local server
-- Returns viewer URL, logs, and collected output files when available
+- Returns a non-empty RGB point cloud, camera trajectory, preview, and point count
 - Supports sky masking and keyframe sampling
 
 **Weight Download**:
@@ -1570,6 +1569,8 @@ hf download robbyant/lingbot-map lingbot-map-long.pt \
 
 **Install**:
 ```bash
+git clone https://github.com/Robbyant/lingbot-map.git third_party/lingbot-map
+git -C third_party/lingbot-map checkout 4cd986009b9adeded8a4e740919221940dedeffe
 cd third_party/lingbot-map
 pip install -e ".[vis]"
 pip install flask
@@ -1593,8 +1594,9 @@ result = tool.call(
     mask_sky=True,
     keyframe_interval=1,
     max_frames=128,
+    wait_for_completion=True,
 )
-print(result["viewer_url"])
+print(result["point_cloud_path"], result["trajectory_path"], result["points_count"])
 ```
 
 **Resources**:

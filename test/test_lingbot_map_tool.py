@@ -3,9 +3,11 @@
 import os
 import sys
 import base64
+import json
 from pathlib import Path
 
 import pytest
+import numpy as np
 from PIL import Image
 
 project_root = Path(__file__).parent.parent
@@ -26,6 +28,40 @@ def _make_frames(tmp_path: Path, count: int = 8) -> list[str]:
         image.save(path)
         paths.append(str(path))
     return paths
+
+
+def _write_fake_runner(path: Path) -> None:
+    path.write_text(
+        """
+import argparse
+import json
+from pathlib import Path
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--repo_path')
+parser.add_argument('--model_path')
+parser.add_argument('--image_folder')
+parser.add_argument('--output_dir')
+parser.add_argument('--camera_num_iterations')
+parser.add_argument('--use_sdpa', action='store_true')
+parser.add_argument('--mask_sky', action='store_true')
+args = parser.parse_args()
+out = Path(args.output_dir)
+out.mkdir(parents=True, exist_ok=True)
+(out / 'trajectory.json').write_text(json.dumps({'frames': list(range(8))}))
+(out / 'point_cloud.ply').write_text(
+    'ply\\nformat ascii 1.0\\nelement vertex 4\\n'
+    'property float x\\nproperty float y\\nproperty float z\\nend_header\\n'
+    '0 0 0\\n1 0 0\\n0 1 0\\n0 0 1\\n'
+)
+(out / 'reconstruction_metadata.json').write_text(json.dumps({
+    'points_count': 4,
+    'checkpoint_path': str(Path(args.model_path).resolve()),
+    'checkpoint_bytes': Path(args.model_path).stat().st_size,
+}))
+""",
+        encoding="utf-8",
+    )
 
 
 def test_lingbot_map_import():
@@ -53,6 +89,8 @@ def test_mock_image_folder_mapping(tmp_path):
     assert Path(result["preview_path"]).exists()
     assert Path(result["trajectory_path"]).exists()
     assert Path(result["point_cloud_path"]).exists()
+    assert result["points_count"] == 4
+    assert result["result"]["points_count"] == 4
     assert result["viewer_url"]
 
 
@@ -93,30 +131,54 @@ def test_rejects_invalid_paths_and_frame_options(tmp_path):
     assert "keyframe_interval" in bad_interval["error"]
 
 
+def test_rejects_async_mode_without_reconstruction_artifacts(tmp_path):
+    frames = _make_frames(tmp_path)
+    result = LingBotMapTool(use_mock=True).call(
+        image_paths=frames,
+        wait_for_completion=False,
+    )
+    assert result["success"] is False
+    assert "wait_for_completion=True" in result["error"]
+
+
+def test_server_reencodes_jpeg_frames_as_png(tmp_path):
+    from spagent.external_experts.LingBotMap import lingbot_map_server as server
+
+    source = tmp_path / "jpeg_frames"
+    source.mkdir()
+    for idx in range(8):
+        Image.new("RGB", (32, 24), (idx * 20, 50, 90)).save(source / f"{idx:06d}.jpeg")
+    staged = server._prepare_frame_dir(
+        image_folder=str(source),
+        images=[],
+        output_dir=tmp_path / "run",
+        keyframe_interval=1,
+        max_frames=8,
+    )
+    paths = sorted(staged.iterdir())
+    assert len(paths) == 8
+    assert all(path.suffix == ".png" for path in paths)
+    assert all(Image.open(path).format == "PNG" for path in paths)
+
+
 def test_server_fake_official_cli_completion(tmp_path):
     from spagent.external_experts.LingBotMap import lingbot_map_server as server
 
     repo = tmp_path / "lingbot-map"
     repo.mkdir()
-    demo = repo / "demo.py"
-    demo.write_text(
-        """
-import json
-import os
-from pathlib import Path
-
-out = Path(os.environ["LINGBOT_MAP_OUTPUT_DIR"])
-out.mkdir(parents=True, exist_ok=True)
-(out / "trajectory.json").write_text(json.dumps({"ok": True}))
-(out / "point_cloud.ply").write_text("ply\\nformat ascii 1.0\\nelement vertex 0\\nend_header\\n")
-""",
-        encoding="utf-8",
-    )
+    (repo / "demo.py").write_text("# fake official demo\n", encoding="utf-8")
+    runner = tmp_path / "fake_runner.py"
+    _write_fake_runner(runner)
     model_path = tmp_path / "lingbot-map-long.pt"
     model_path.write_text("fake checkpoint", encoding="utf-8")
     frames = _make_frames(tmp_path, count=8)
 
-    server.configure(repo_path=str(repo), model_path=str(model_path), python_bin=sys.executable)
+    server.configure(
+        repo_path=str(repo),
+        model_path=str(model_path),
+        python_bin=sys.executable,
+        runner_path=str(runner),
+    )
     frame_dir = tmp_path / "server_frames"
     frame_dir.mkdir()
     for idx, frame in enumerate(frames):
@@ -132,7 +194,42 @@ out.mkdir(parents=True, exist_ok=True)
     assert result["success"] is True
     assert result["trajectory_path"].endswith("trajectory.json")
     assert result["point_cloud_path"].endswith("point_cloud.ply")
+    assert result["points_count"] == 4
+    assert result["checkpoint_path"] == str(model_path.resolve())
     assert "--mask_sky" in result["command"]
+    assert str(model_path) in result["command"]
+
+
+def test_runner_exports_nonempty_ply_trajectory_and_metadata(tmp_path):
+    from spagent.external_experts.LingBotMap.lingbot_map_runner import export_artifacts
+
+    frame_count, height, width = 8, 2, 3
+    points = np.arange(frame_count * height * width * 3, dtype=np.float32).reshape(frame_count, height, width, 3)
+    predictions = {
+        "world_points": points,
+        "world_points_conf": np.full((frame_count, height, width), 2.0, dtype=np.float32),
+        "images": np.full((frame_count, 3, height, width), 0.5, dtype=np.float32),
+        "extrinsic": np.tile(np.eye(4, dtype=np.float32)[:3], (frame_count, 1, 1)),
+        "intrinsic": np.tile(np.eye(3, dtype=np.float32), (frame_count, 1, 1)),
+    }
+    checkpoint = tmp_path / "model.pt"
+    checkpoint.write_bytes(b"checkpoint")
+    image_paths = [f"frame_{idx:06d}.png" for idx in range(frame_count)]
+    metadata = export_artifacts(
+        predictions,
+        image_paths,
+        tmp_path / "export",
+        checkpoint,
+        point_stride=2,
+        max_points=100,
+    )
+
+    assert metadata["points_count"] == 24
+    assert (tmp_path / "export" / "point_cloud.ply").is_file()
+    trajectory = json.loads((tmp_path / "export" / "trajectory.json").read_text())
+    assert trajectory["convention"] == "camera_to_world"
+    assert len(trajectory["frames"]) == frame_count
+    assert (tmp_path / "export" / "preview.png").is_file()
 
 
 def test_client_saves_server_outputs(tmp_path, monkeypatch):
@@ -174,19 +271,9 @@ def test_server_http_route_with_fake_cli(tmp_path):
 
     repo = tmp_path / "lingbot-map-http"
     repo.mkdir()
-    (repo / "demo.py").write_text(
-        """
-import json
-import os
-from pathlib import Path
-
-out = Path(os.environ["LINGBOT_MAP_OUTPUT_DIR"])
-out.mkdir(parents=True, exist_ok=True)
-(out / "trajectory.json").write_text(json.dumps({"route": True}))
-(out / "point_cloud.ply").write_text("ply\\nformat ascii 1.0\\nelement vertex 0\\nend_header\\n")
-""",
-        encoding="utf-8",
-    )
+    (repo / "demo.py").write_text("# fake official demo\n", encoding="utf-8")
+    runner = tmp_path / "fake_http_runner.py"
+    _write_fake_runner(runner)
     model_path = tmp_path / "lingbot-map-long.pt"
     model_path.write_text("fake checkpoint", encoding="utf-8")
     frames = _make_frames(tmp_path, count=8)
@@ -198,7 +285,12 @@ out.mkdir(parents=True, exist_ok=True)
         for frame in frames
     ]
 
-    server.configure(repo_path=str(repo), model_path=str(model_path), python_bin=sys.executable)
+    server.configure(
+        repo_path=str(repo),
+        model_path=str(model_path),
+        python_bin=sys.executable,
+        runner_path=str(runner),
+    )
     client = server.app.test_client()
     response = client.post(
         "/infer",
@@ -215,6 +307,7 @@ out.mkdir(parents=True, exist_ok=True)
     assert data["num_frames"] == 8
     assert "trajectory_json" in data
     assert "point_cloud" in data
+    assert data["points_count"] == 4
 
 
 @pytest.mark.skipif(
@@ -226,7 +319,9 @@ def test_real_lingbot_map_server_smoke(tmp_path):
     server_url = os.environ.get("LINGBOT_MAP_SERVER_URL", "http://127.0.0.1:20040")
     tool = LingBotMapTool(use_mock=False, server_url=server_url, output_dir=str(tmp_path / "out"))
 
-    result = tool.call(image_paths=frames, mask_sky=False, wait_for_completion=False)
+    result = tool.call(image_paths=frames, mask_sky=False, wait_for_completion=True)
 
     assert result["success"] is True
-    assert result["viewer_url"]
+    assert result["points_count"] > 0
+    assert Path(result["point_cloud_path"]).is_file()
+    assert Path(result["trajectory_path"]).is_file()
