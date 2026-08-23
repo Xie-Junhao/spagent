@@ -107,16 +107,11 @@ class SAM3Client:
             result = response.json()
             if not result.get("success"):
                 return result
-
-            if result.get("video") and save_overlay:
-                output_path = self._save_video(video_path, result["video"])
-                result["output_path"] = output_path
-                result["video_path"] = output_path
-            else:
-                result.pop("video", None)
-                result["output_path"] = None
-                result["video_path"] = None
-            return result
+            return self._save_video_outputs(
+                video_path=video_path,
+                result=result,
+                save_overlay=save_overlay,
+            )
         except Exception as e:
             logger.error("SAM3 video inference request failed: %s", e)
             return {"success": False, "error": str(e)}
@@ -183,13 +178,43 @@ class SAM3Client:
             "scores": scores,
         }
 
-    def _save_video(self, video_path: str, video_b64: str) -> str:
+    def _save_video_outputs(self, video_path: str, result: Dict, save_overlay: bool) -> Dict:
         stem = Path(video_path).stem
         timestamp = int(time.time())
         output_path = os.path.join(self.output_dir, f"sam3_video_{stem}_{timestamp}.mp4")
-        with open(output_path, "wb") as f:
-            f.write(base64.b64decode(video_b64))
-        return output_path
+        video_b64 = result.pop("video", None)
+        if video_b64 and save_overlay:
+            with open(output_path, "wb") as f:
+                f.write(base64.b64decode(video_b64))
+            result["output_path"] = output_path
+            result["video_path"] = output_path
+        else:
+            result["output_path"] = None
+            result["video_path"] = None
+
+        mask_dir = Path(self.output_dir) / f"sam3_video_{stem}_{timestamp}_masks"
+        mask_dir.mkdir(parents=True, exist_ok=True)
+        frame_records = []
+        flat_mask_paths = []
+        for frame_record in result.pop("frame_masks", []) or []:
+            frame_index = int(frame_record.get("frame_index", len(frame_records)))
+            saved_paths = []
+            for instance_index, mask_record in enumerate(frame_record.get("masks", []) or []):
+                encoded = mask_record.get("mask") if isinstance(mask_record, dict) else mask_record
+                mask_array = self._decode_mask(encoded)
+                if mask_array is None:
+                    continue
+                mask_path = mask_dir / f"frame_{frame_index:06d}_instance_{instance_index:03d}.png"
+                if not cv2.imwrite(str(mask_path), mask_array):
+                    raise OSError(f"Unable to save SAM3 video mask: {mask_path}")
+                saved_paths.append(str(mask_path))
+                flat_mask_paths.append(str(mask_path))
+            frame_records.append({"frame_index": frame_index, "mask_paths": saved_paths})
+
+        result["masks"] = frame_records
+        result["frame_mask_paths"] = flat_mask_paths
+        result["mask_frames_dir"] = str(mask_dir)
+        return result
 
     def _decode_mask(self, mask_b64: Optional[str]) -> Optional[np.ndarray]:
         if not mask_b64:
