@@ -17,7 +17,7 @@ from PIL import Image, ImageChops, ImageDraw
 sys.path.append(str(Path(__file__).parent.parent))
 
 from core.tool import Tool
-from core.tool_result import BOX_XYXY_PIXEL, DETECTION, DetectionPayload, ToolResult
+from core.tool_result import IMAGE_GENERATION, MediaPayload, ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +108,7 @@ class CropTool(Tool):
         try:
             path = Path(image_path)
             if not path.exists():
-                return ToolResult.fail(f"Image file not found: {image_path}", category=DETECTION)
+                return ToolResult.fail(f"Image file not found: {image_path}", category=IMAGE_GENERATION)
 
             destination = Path(output_dir) if output_dir else self.output_dir
             destination.mkdir(parents=True, exist_ok=True)
@@ -121,7 +121,7 @@ class CropTool(Tool):
                 if modes != 1:
                     return ToolResult.fail(
                         "Provide exactly one crop input: box, boxes, mask_path, or polygon.",
-                        category=DETECTION,
+                        category=IMAGE_GENERATION,
                     )
 
                 if box is not None:
@@ -139,10 +139,10 @@ class CropTool(Tool):
                 crop = self._crop_polygon(image, path.stem, polygon, padding, relative_coords, destination)
                 return self._result([crop], [width, height], "polygon", single=True)
         except ValueError as e:
-            return ToolResult.fail(str(e), category=DETECTION)
+            return ToolResult.fail(str(e), category=IMAGE_GENERATION)
         except Exception as e:
             logger.error("Crop tool error: %s", e)
-            return ToolResult.fail(str(e), category=DETECTION)
+            return ToolResult.fail(str(e), category=IMAGE_GENERATION)
 
     @staticmethod
     def _result(
@@ -152,16 +152,15 @@ class CropTool(Tool):
         single: bool,
     ) -> ToolResult:
         output_paths = [crop["output_path"] for crop in crops]
-        payload = DetectionPayload(
-            boxes=[crop["box"] for crop in crops],
-            labels=["crop"] * len(crops),
-            box_format=BOX_XYXY_PIXEL,
-            image_width=original_size[0],
-            image_height=original_size[1],
+        payload = MediaPayload(
+            category=IMAGE_GENERATION,
+            output_path=output_paths[0],
+            image_paths=output_paths,
         )
         extras: Dict[str, Any] = {
             "mode": mode,
             "original_size": original_size,
+            "source_boxes": [crop["box"] for crop in crops],
             "crops": crops,
             "output_paths": output_paths,
         }
@@ -171,7 +170,7 @@ class CropTool(Tool):
             success=True,
             payload=payload,
             description=f"Created {len(crops)} {mode} crop(s).",
-            output_path=output_paths[0] if single else None,
+            output_path=output_paths[0],
             crop_paths=output_paths,
             **extras,
         )

@@ -308,7 +308,7 @@ TOOL_CATALOG: List[ToolCatalogEntry] = [
         "crop_tool",
         {},
         accepts_use_mock=False,
-        category="detection",
+        category="image_generation",
     ),
 ]
 
