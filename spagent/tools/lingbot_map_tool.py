@@ -32,7 +32,7 @@ class LingBotMapTool(Tool):
         super().__init__(
             name="lingbot_map_tool",
             description=(
-                "Reconstruct a 3D scene from an ordered image sequence using LingBot-Map. "
+                "Reconstruct a 3D scene from at least eight ordered images using LingBot-Map. "
                 "Returns point-cloud, camera-trajectory, and preview artifacts."
             ),
         )
@@ -61,12 +61,13 @@ class LingBotMapTool(Tool):
             "properties": {
                 "image_folder": {
                     "type": "string",
-                    "description": "Path to a folder containing ordered input images.",
+                    "description": "Path to a folder containing at least eight ordered input images.",
                 },
                 "image_paths": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Ordered list of image paths. Use this instead of image_folder.",
+                    "minItems": MIN_REAL_FRAMES,
+                    "description": "Ordered list of at least eight image paths. Use this instead of image_folder.",
                 },
                 "mask_sky": {
                     "type": "boolean",
@@ -91,6 +92,7 @@ class LingBotMapTool(Tool):
                 },
                 "wait_for_completion": {
                     "type": "boolean",
+                    "const": True,
                     "description": "Wait for reconstruction and return PLY and trajectory artifacts.",
                     "default": True,
                 },
@@ -124,7 +126,7 @@ class LingBotMapTool(Tool):
                 return ToolResult.fail(error or "Invalid LingBot-Map input.", category=RECONSTRUCTION_3D)
 
             result = self._client.infer(
-                image_folder=image_folder,
+                image_folder=None,
                 image_paths=normalized_paths,
                 mask_sky=bool(mask_sky),
                 keyframe_interval=int(keyframe_interval),
@@ -197,13 +199,16 @@ class LingBotMapTool(Tool):
             folder = Path(image_folder)
             if not folder.exists() or not folder.is_dir():
                 return False, f"Image folder not found: {image_folder}", None
-            frames = [p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS]
+            frames = sorted(
+                (p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS),
+                key=_frame_sort_key,
+            )
             if not frames:
                 return False, f"No supported image files found in: {image_folder}", None
             sampled_count = len(frames[:: int(keyframe_interval)][: int(max_frames)])
             if sampled_count < MIN_REAL_FRAMES:
                 return False, f"LingBot-Map requires at least {MIN_REAL_FRAMES} sampled frames.", None
-            return True, None, None
+            return True, None, [str(path) for path in frames]
 
         if not isinstance(image_paths, list) or len(image_paths) == 0:
             return False, "image_paths must be a non-empty list.", None
@@ -219,3 +224,9 @@ class LingBotMapTool(Tool):
         if sampled_count < MIN_REAL_FRAMES:
             return False, f"LingBot-Map requires at least {MIN_REAL_FRAMES} sampled frames.", None
         return True, None, normalized_paths
+
+
+def _frame_sort_key(path: Path):
+    if path.stem.isdigit():
+        return 0, int(path.stem)
+    return 1, path.name.lower()

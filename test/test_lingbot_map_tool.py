@@ -74,6 +74,26 @@ def test_lingbot_map_schema_contains_required_inputs():
     assert "image_paths" in schema["properties"]
     assert "mask_sky" in schema["properties"]
     assert "oneOf" in schema
+    assert schema["properties"]["image_paths"]["minItems"] == 8
+    assert schema["properties"]["wait_for_completion"]["const"] is True
+
+
+def test_image_folder_is_normalized_in_numeric_order_for_upload(tmp_path):
+    frame_dir = tmp_path / "unordered_frames"
+    frame_dir.mkdir()
+    for index in [10, 2, 1, 7, 6, 5, 4, 3]:
+        Image.new("RGB", (16, 12), color=(index, 20, 30)).save(frame_dir / f"{index}.png")
+
+    valid, error, paths = LingBotMapTool(use_mock=True)._validate_inputs(
+        image_folder=str(frame_dir),
+        image_paths=None,
+        keyframe_interval=1,
+        max_frames=8,
+    )
+
+    assert valid is True
+    assert error is None
+    assert [Path(path).stem for path in paths] == ["1", "2", "3", "4", "5", "6", "7", "10"]
 
 
 def test_mock_image_folder_mapping(tmp_path):
@@ -232,12 +252,31 @@ def test_runner_exports_nonempty_ply_trajectory_and_metadata(tmp_path):
     assert (tmp_path / "export" / "preview.png").is_file()
 
 
+def test_runner_converts_camera_to_world_before_depth_unprojection():
+    from spagent.external_experts.LingBotMap.lingbot_map_runner import (
+        _camera_to_world_to_world_to_camera,
+    )
+
+    camera_to_world = np.tile(np.eye(4, dtype=np.float32)[:3], (2, 1, 1))
+    camera_to_world[0, 0, 3] = 2.0
+    camera_to_world[1, 1, 3] = -3.0
+
+    world_to_camera = _camera_to_world_to_world_to_camera(camera_to_world)
+
+    assert world_to_camera.shape == (2, 3, 4)
+    assert np.allclose(world_to_camera[0, :, 3], [-2.0, 0.0, 0.0])
+    assert np.allclose(world_to_camera[1, :, 3], [0.0, 3.0, 0.0])
+    assert np.allclose(world_to_camera[:, :3, :3], np.eye(3)[None])
+
+
 def test_client_saves_server_outputs(tmp_path, monkeypatch):
     from spagent.external_experts.LingBotMap.lingbot_map_client import LingBotMapClient
 
     frames = _make_frames(tmp_path, count=8)
     preview = base64.b64encode(Path(frames[0]).read_bytes()).decode("utf-8")
     ply = base64.b64encode(b"ply\nformat ascii 1.0\nelement vertex 0\nend_header\n").decode("utf-8")
+    metadata = base64.b64encode(b'{"points_count": 4}').decode("utf-8")
+    log = base64.b64encode(b"completed").decode("utf-8")
 
     class FakeResponse:
         status_code = 200
@@ -248,12 +287,16 @@ def test_client_saves_server_outputs(tmp_path, monkeypatch):
                 "success": True,
                 "preview_image": preview,
                 "point_cloud": ply,
+                "metadata_json": metadata,
+                "log": log,
+                "output_dir": "/server-only/path",
                 "viewer_url": "http://127.0.0.1:8080",
             }
 
     def fake_post(url, json, timeout):
         assert url.endswith("/infer")
         assert json["images"][0]["filename"].endswith(".png")
+        assert "output_dir" not in json
         return FakeResponse()
 
     monkeypatch.setattr("spagent.external_experts.LingBotMap.lingbot_map_client.requests.post", fake_post)
@@ -263,6 +306,9 @@ def test_client_saves_server_outputs(tmp_path, monkeypatch):
     assert result["success"] is True
     assert Path(result["preview_path"]).exists()
     assert Path(result["point_cloud_path"]).exists()
+    assert Path(result["metadata_path"]).read_text() == '{"points_count": 4}'
+    assert Path(result["log_path"]).read_text() == "completed"
+    assert result["output_dir"] == str(tmp_path / "client_out")
 
 
 def test_server_http_route_with_fake_cli(tmp_path):
@@ -290,6 +336,7 @@ def test_server_http_route_with_fake_cli(tmp_path):
         model_path=str(model_path),
         python_bin=sys.executable,
         runner_path=str(runner),
+        work_dir=str(tmp_path / "server_work"),
     )
     client = server.app.test_client()
     response = client.post(
@@ -297,7 +344,6 @@ def test_server_http_route_with_fake_cli(tmp_path):
         json={
             "images": images,
             "wait_for_completion": True,
-            "output_dir": str(tmp_path / "http_out"),
         },
     )
 
@@ -307,7 +353,10 @@ def test_server_http_route_with_fake_cli(tmp_path):
     assert data["num_frames"] == 8
     assert "trajectory_json" in data
     assert "point_cloud" in data
+    assert "metadata_json" in data
+    assert "log" in data
     assert data["points_count"] == 4
+    assert Path(data["output_dir"]).parent == tmp_path / "server_work"
 
 
 @pytest.mark.skipif(

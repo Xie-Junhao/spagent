@@ -45,8 +45,6 @@ class LingBotMapClient:
             "max_frames": int(max_frames),
             "wait_for_completion": bool(wait_for_completion),
         }
-        if output_dir:
-            payload["output_dir"] = output_dir
         if image_folder:
             payload["image_folder"] = image_folder
         if image_paths:
@@ -84,6 +82,8 @@ class LingBotMapClient:
             ("trajectory_json", "trajectory.json", "trajectory_path"),
             ("point_cloud", "point_cloud.ply", "point_cloud_path"),
             ("video", "lingbot_map_render.mp4", "video_path"),
+            ("metadata_json", "reconstruction_metadata.json", "metadata_path"),
+            ("log", "lingbot_map.log", "log_path"),
         ]:
             encoded = data.pop(key, None)
             if encoded:
@@ -91,5 +91,5 @@ class LingBotMapClient:
                 path.write_bytes(base64.b64decode(encoded))
                 data[path_field] = str(path)
 
-        data.setdefault("output_dir", str(out_dir))
+        data["output_dir"] = str(out_dir)
         return data

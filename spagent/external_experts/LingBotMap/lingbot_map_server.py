@@ -6,7 +6,6 @@ import logging
 import os
 import subprocess
 import tempfile
-import time
 import traceback
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -103,8 +102,7 @@ def infer():
         max_frames = max(1, int(data.get("max_frames", 128)))
         wait_for_completion = bool(data.get("wait_for_completion", True))
 
-        output_dir = Path(data.get("output_dir") or Path(config["work_dir"]) / f"run_{int(time.time() * 1000)}")
-        output_dir.mkdir(parents=True, exist_ok=True)
+        output_dir = Path(tempfile.mkdtemp(prefix="run_", dir=config["work_dir"]))
         frame_dir = _prepare_frame_dir(
             image_folder=image_folder,
             images=images,
@@ -240,6 +238,7 @@ def _run_lingbot_map(
                 "output_dir": str(output_dir),
                 "log_path": str(log_path),
                 "wait_for_completion": True,
+                "log": _encode_file(log_path),
             }
         )
         return result
@@ -295,6 +294,7 @@ def _collect_outputs(output_dir: Path) -> Dict[str, Any]:
     metadata_path = output_dir / "reconstruction_metadata.json"
     if metadata_path.is_file():
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        result["metadata_json"] = _encode_file(metadata_path)
         result["metadata_path"] = str(metadata_path)
         result["points_count"] = metadata.get("points_count")
         result["checkpoint_path"] = metadata.get("checkpoint_path")
@@ -320,11 +320,20 @@ def _collect_outputs(output_dir: Path) -> Dict[str, Any]:
 
 
 def _list_images(folder: Path) -> List[Path]:
-    return sorted([p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS])
+    return sorted(
+        [p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS],
+        key=_frame_sort_key,
+    )
+
+
+def _frame_sort_key(path: Path):
+    if path.stem.isdigit():
+        return 0, int(path.stem)
+    return 1, path.name.lower()
 
 
 def _decode_image(image_b64: str) -> Image.Image:
-    return Image.open(io.BytesIO(base64.b64decode(image_b64))).convert("RGB")
+    return Image.open(io.BytesIO(base64.b64decode(image_b64, validate=True))).convert("RGB")
 
 
 def _encode_file(path: Path) -> str:
