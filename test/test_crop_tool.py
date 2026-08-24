@@ -34,6 +34,9 @@ def test_crop_schema_contains_inputs():
     for key in ["box", "boxes", "mask_path", "polygon", "padding", "relative_coords"]:
         assert key in params["properties"]
     assert "anyOf" in params
+    assert params["properties"]["boxes"]["minItems"] == 1
+    assert params["properties"]["polygon"]["minItems"] == 3
+    assert params["properties"]["padding"]["minimum"] == 0
 
 
 def test_crop_single_box(tmp_path):
@@ -105,6 +108,26 @@ def test_crop_mask(tmp_path):
         assert crop.mode == "RGBA"
 
 
+def test_crop_mask_preserves_source_alpha_and_uses_unique_outputs(tmp_path):
+    image = Image.new("RGBA", (20, 20), color=(255, 0, 0, 255))
+    image.putpixel((10, 10), (255, 0, 0, 0))
+    image_path = tmp_path / "source.png"
+    image.save(image_path)
+    mask = Image.new("L", (10, 10), 255)
+    mask_path = tmp_path / "mask.png"
+    mask.save(mask_path)
+    tool = CropTool(output_dir=str(tmp_path))
+
+    first = tool.call(image_path=str(image_path), mask_path=str(mask_path))
+    second = tool.call(image_path=str(image_path), mask_path=str(mask_path))
+
+    assert first["success"] is True
+    assert second["success"] is True
+    assert first["output_path"] != second["output_path"]
+    with Image.open(first["output_path"]) as crop:
+        assert crop.getpixel((10, 10))[3] == 0
+
+
 def test_crop_polygon(tmp_path):
     image_path = _sample_image(tmp_path / "sample.jpg")
     tool = CropTool(output_dir=str(tmp_path))
@@ -117,6 +140,17 @@ def test_crop_polygon(tmp_path):
     assert os.path.exists(result["output_path"])
     with Image.open(result["output_path"]) as crop:
         assert crop.mode == "RGBA"
+
+
+def test_crop_polygon_uses_unique_outputs(tmp_path):
+    image_path = _sample_image(tmp_path / "sample.jpg")
+    tool = CropTool(output_dir=str(tmp_path))
+    polygon = [[20, 10], [80, 20], [40, 60]]
+
+    first = tool.call(image_path=image_path, polygon=polygon)
+    second = tool.call(image_path=image_path, polygon=polygon)
+
+    assert first["output_path"] != second["output_path"]
 
 
 def test_crop_rejects_missing_image(tmp_path):
@@ -136,6 +170,29 @@ def test_crop_rejects_invalid_box(tmp_path):
 
     assert result["success"] is False
     assert "x2 > x1" in result["error"]
+
+
+def test_crop_rejects_empty_boxes_and_negative_padding(tmp_path):
+    image_path = _sample_image(tmp_path / "sample.jpg")
+    tool = CropTool(output_dir=str(tmp_path))
+
+    empty = tool.call(image_path=image_path, boxes=[])
+    negative = tool.call(image_path=image_path, box=[0, 0, 20, 20], padding=-1)
+
+    assert empty["success"] is False
+    assert "at least one" in empty["error"]
+    assert negative["success"] is False
+    assert "non-negative" in negative["error"]
+
+
+def test_crop_rejects_non_finite_coordinates(tmp_path):
+    image_path = _sample_image(tmp_path / "sample.jpg")
+    tool = CropTool(output_dir=str(tmp_path))
+
+    result = tool.call(image_path=image_path, box=[0, 0, float("inf"), 20])
+
+    assert result["success"] is False
+    assert "finite" in result["error"]
 
 
 def test_crop_requires_exactly_one_crop_input(tmp_path):
