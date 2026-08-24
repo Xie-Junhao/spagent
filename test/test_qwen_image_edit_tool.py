@@ -198,6 +198,14 @@ def test_catalog_builds_tool_and_resolves_function_name():
     assert [tool.name for tool in tools] == ["qwen_image_edit_tool"]
 
 
+def test_real_workflows_expose_dashscope_configuration():
+    workflow_dir = Path(__file__).parents[1] / ".github" / "workflows"
+    for workflow_name in ("tool-real-smoke.yml", "tool-agent-e2e.yml"):
+        workflow = (workflow_dir / workflow_name).read_text(encoding="utf-8")
+        assert "DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}" in workflow
+        assert "DASHSCOPE_BASE_URL: ${{ secrets.DASHSCOPE_BASE_URL }}" in workflow
+
+
 def test_agent_selects_generation_workflow_and_tool_guide():
     from spagent import SPAgent
 
