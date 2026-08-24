@@ -66,8 +66,17 @@ class MockLingBotMapService:
         if image_folder:
             folder = Path(image_folder)
             if folder.exists():
-                return sorted([p for p in folder.iterdir() if p.suffix.lower() in IMAGE_EXTENSIONS and p.is_file()])
+                return sorted(
+                    [p for p in folder.iterdir() if p.suffix.lower() in IMAGE_EXTENSIONS and p.is_file()],
+                    key=self._frame_sort_key,
+                )
         return []
+
+    @staticmethod
+    def _frame_sort_key(path: Path):
+        if path.stem.isdigit():
+            return 0, int(path.stem)
+        return 1, path.name.lower()
 
     @staticmethod
     def _write_preview(frames: List[Path], output_path: Path, mask_sky: bool) -> None:

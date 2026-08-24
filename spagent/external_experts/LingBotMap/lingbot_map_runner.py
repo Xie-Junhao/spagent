@@ -120,7 +120,8 @@ def export_artifacts(
             )
         from lingbot_map.utils.geometry import unproject_depth_map_to_point_map
 
-        points_value = unproject_depth_map_to_point_map(depth, extrinsic, intrinsic)
+        world_to_camera = _camera_to_world_to_world_to_camera(extrinsic)
+        points_value = unproject_depth_map_to_point_map(depth, world_to_camera, intrinsic)
         point_source = "depth_unprojection"
     points = np.asarray(points_value)
     if points.ndim != 4 or points.shape[-1] != 3:
@@ -199,6 +200,18 @@ def export_artifacts(
     }
     metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     return metadata
+
+
+def _camera_to_world_to_world_to_camera(extrinsic) -> np.ndarray:
+    camera_to_world = np.asarray(extrinsic)
+    if camera_to_world.ndim != 3 or camera_to_world.shape[1:] != (3, 4):
+        raise ValueError(f"Invalid camera-to-world extrinsic shape: {camera_to_world.shape}")
+    homogeneous = np.broadcast_to(
+        np.eye(4, dtype=camera_to_world.dtype),
+        (len(camera_to_world), 4, 4),
+    ).copy()
+    homogeneous[:, :3, :4] = camera_to_world
+    return np.linalg.inv(homogeneous)[:, :3, :4]
 
 
 def _images_nhwc(value, expected_shape) -> np.ndarray:

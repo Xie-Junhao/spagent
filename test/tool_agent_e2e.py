@@ -34,7 +34,9 @@ import base64
 import logging
 import os
 import re
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 logging.disable(logging.WARNING)
@@ -49,6 +51,7 @@ from tools.catalog import TOOL_CATALOG, DEFAULT_SERVER_URLS, build_tools  # noqa
 from tool_real_smoke import _probe                              # noqa: E402
 
 IMG = "assets/dog.jpeg"
+MIN_LINGBOT_MAP_FRAMES = 8
 PASS, FAIL = "✅", "❌"
 
 DEFAULT_MODELS = {
@@ -71,6 +74,14 @@ EPISODE_PROMPTS = {
     "optical_flow": "Estimate the motion between the two provided images using the available tool and summarize it.",
     "ocr": "Read and transcribe any text in this image using the available tool.",
     "image_generation": "Generate an image of a dog running on a beach using the available tool and report where it was saved.",
+}
+
+TOOL_EPISODE_PROMPTS = {
+    "lingbot_map": (
+        "Reconstruct a 3D map from all eight ordered input frames. Call the available "
+        "tool with every listed image path, then choose A if it returns a positive "
+        "point count and reconstruction artifacts, or B if it does not."
+    ),
 }
 
 
@@ -212,12 +223,22 @@ def run_episode(entry, model, url, prompt):
         return False, [f"tool build failed: {'; '.join(errs)}"[:150]]
     tool = tools[0]
 
-    prompt = prompt or EPISODE_PROMPTS.get(entry.category)
+    prompt = prompt or TOOL_EPISODE_PROMPTS.get(entry.key) or EPISODE_PROMPTS.get(entry.category)
     if not prompt:
         return False, [f"no default episode prompt for category {entry.category!r} "
                        "(e.g. video_generation is paid) — pass --prompt to run anyway"]
 
     images = IMG
+    episode_frames = None
+    if entry.key == "lingbot_map":
+        episode_frames = tempfile.TemporaryDirectory(prefix="spagent_lingbot_map_e2e_")
+        frame_dir = Path(episode_frames.name)
+        images = []
+        for index in range(MIN_LINGBOT_MAP_FRAMES):
+            frame_path = frame_dir / f"{index:06d}.jpg"
+            shutil.copyfile(IMG, frame_path)
+            images.append(str(frame_path))
+        prompt += f" Use image_folder={str(frame_dir)!r} in the tool call."
     if entry.category == "optical_flow":
         images = [IMG, IMG]
     if entry.category == "image_generation":
@@ -228,6 +249,9 @@ def run_episode(entry, model, url, prompt):
         res = agent.step(content=prompt, images=images)
     except Exception as e:
         return False, [f"agent loop raised {type(e).__name__}: {e}"[:200]]
+    finally:
+        if episode_frames is not None:
+            episode_frames.cleanup()
 
     # 1. tool under test was actually invoked
     tool_calls = [c for c in (res.tool_calls or []) if c.get("name") == tool.name]
