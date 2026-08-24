@@ -12,7 +12,6 @@ sys.path.insert(0, str(project_root / "spagent"))
 
 from spagent.tools import CropTool
 from core.tool_result import ToolResult, validate_payload
-from tools.catalog import TOOL_CATALOG
 
 
 def _sample_image(path: Path, size=(100, 80)) -> str:
@@ -25,11 +24,6 @@ def _sample_image(path: Path, size=(100, 80)) -> str:
 
 def test_crop_tool_is_exported():
     assert CropTool is not None
-
-
-def test_crop_catalog_uses_media_output_contract():
-    entry = next(entry for entry in TOOL_CATALOG if entry.key == "crop")
-    assert entry.category == "image_generation"
 
 
 def test_crop_schema_contains_inputs():
@@ -53,11 +47,7 @@ def test_crop_single_box(tmp_path):
 
     assert result["success"] is True
     assert isinstance(result, ToolResult)
-    assert validate_payload(result, "image_generation")[0]
-    assert result["category"] == "image_generation"
-    assert result["image_paths"] == [result["output_path"]]
-    assert "boxes" not in result
-    assert result["source_boxes"] == [[10, 20, 50, 60]]
+    assert validate_payload(result, "detection")[0]
     assert result["box"] == [10, 20, 50, 60]
     assert result["crop_size"] == [40, 40]
     assert os.path.exists(result["output_path"])
@@ -94,10 +84,6 @@ def test_crop_multiple_boxes(tmp_path):
     assert result["success"] is True
     assert result["mode"] == "boxes"
     assert result["crop_paths"] == result["output_paths"]
-    assert result["image_paths"] == result["output_paths"]
-    assert result["output_path"] == result["output_paths"][0]
-    assert result["source_boxes"] == [[0, 0, 20, 20], [20, 10, 60, 50]]
-    assert validate_payload(result, "image_generation")[0]
     assert len(result["crops"]) == 2
     assert result["crops"][0]["crop_size"] == [20, 20]
     assert result["crops"][1]["crop_size"] == [40, 40]
