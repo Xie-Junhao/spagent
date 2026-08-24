@@ -275,6 +275,7 @@ def test_client_saves_server_outputs(tmp_path, monkeypatch):
     frames = _make_frames(tmp_path, count=8)
     preview = base64.b64encode(Path(frames[0]).read_bytes()).decode("utf-8")
     ply = base64.b64encode(b"ply\nformat ascii 1.0\nelement vertex 0\nend_header\n").decode("utf-8")
+    trajectory = base64.b64encode(b'{"frames": []}').decode("utf-8")
     metadata = base64.b64encode(b'{"points_count": 4}').decode("utf-8")
     log = base64.b64encode(b"completed").decode("utf-8")
 
@@ -286,6 +287,7 @@ def test_client_saves_server_outputs(tmp_path, monkeypatch):
             return {
                 "success": True,
                 "preview_image": preview,
+                "trajectory_json": trajectory,
                 "point_cloud": ply,
                 "metadata_json": metadata,
                 "log": log,
@@ -305,10 +307,83 @@ def test_client_saves_server_outputs(tmp_path, monkeypatch):
 
     assert result["success"] is True
     assert Path(result["preview_path"]).exists()
+    assert Path(result["trajectory_path"]).exists()
     assert Path(result["point_cloud_path"]).exists()
     assert Path(result["metadata_path"]).read_text() == '{"points_count": 4}'
     assert Path(result["log_path"]).read_text() == "completed"
     assert result["output_dir"] == str(tmp_path / "client_out")
+
+
+def test_client_uses_unique_artifact_paths(tmp_path):
+    from spagent.external_experts.LingBotMap.lingbot_map_client import LingBotMapClient
+
+    client = LingBotMapClient(output_dir=str(tmp_path / "client_out"))
+    payload = {
+        "success": True,
+        "trajectory_json": base64.b64encode(b'{"frames": []}').decode("utf-8"),
+        "point_cloud": base64.b64encode(b"ply\nformat ascii 1.0\nend_header\n").decode("utf-8"),
+    }
+
+    first = client._save_outputs(payload, None)
+    second = client._save_outputs(payload, None)
+
+    assert first["point_cloud_path"] != second["point_cloud_path"]
+    assert first["trajectory_path"] != second["trajectory_path"]
+    assert Path(first["point_cloud_path"]).is_file()
+    assert Path(second["point_cloud_path"]).is_file()
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "message"),
+    [
+        ("point_cloud", base64.b64encode(b"not a point cloud").decode("utf-8"), "PLY or PCD"),
+        ("trajectory_json", base64.b64encode(b"not json").decode("utf-8"), "valid JSON"),
+        ("preview_image", base64.b64encode(b"not an image").decode("utf-8"), "valid image"),
+        ("video", base64.b64encode(b"not an mp4").decode("utf-8"), "valid MP4"),
+        ("point_cloud", "not-base64!", "Invalid base64"),
+    ],
+)
+def test_client_rejects_malformed_artifacts(tmp_path, key, value, message):
+    from spagent.external_experts.LingBotMap.lingbot_map_client import LingBotMapClient
+
+    client = LingBotMapClient(output_dir=str(tmp_path / "client_out"))
+    with pytest.raises(ValueError, match=message):
+        client._save_outputs({"success": True, key: value}, None)
+
+
+@pytest.mark.parametrize(
+    ("result_update", "message"),
+    [
+        ({"trajectory_path": None}, "trajectory"),
+        ({"points_count": 0}, "points_count"),
+        ({"point_cloud_path": None}, "point cloud"),
+    ],
+)
+def test_tool_rejects_incomplete_success_response(tmp_path, result_update, message):
+    frames = _make_frames(tmp_path)
+    point_cloud = tmp_path / "point_cloud.ply"
+    point_cloud.write_text("ply\nformat ascii 1.0\nend_header\n", encoding="utf-8")
+    trajectory = tmp_path / "trajectory.json"
+    trajectory.write_text('{"frames": []}', encoding="utf-8")
+    backend_result = {
+        "success": True,
+        "point_cloud_path": str(point_cloud),
+        "trajectory_path": str(trajectory),
+        "points_count": 1,
+        "num_frames": 8,
+    }
+    backend_result.update(result_update)
+
+    class IncompleteBackend:
+        def infer(self, **kwargs):
+            return backend_result
+
+    tool = LingBotMapTool(use_mock=True)
+    tool._client = IncompleteBackend()
+    result = tool.call(image_paths=frames)
+
+    assert result["success"] is False
+    assert message in result["error"]
 
 
 def test_server_http_route_with_fake_cli(tmp_path):
