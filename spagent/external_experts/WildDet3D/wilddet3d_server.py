@@ -2,6 +2,7 @@ import argparse
 import base64
 import io
 import logging
+import math
 import os
 import sys
 import traceback
@@ -44,6 +45,7 @@ model = None
 preprocess_fn = None
 draw_3d_boxes_fn = None
 model_name = "wilddet3d"
+default_score_threshold = 0.3
 
 
 def load_model(
@@ -51,7 +53,7 @@ def load_model(
     score_threshold: float = 0.3,
     repo_path: Optional[str] = None,
 ) -> bool:
-    global model, preprocess_fn, draw_3d_boxes_fn, model_name
+    global model, preprocess_fn, draw_3d_boxes_fn, model_name, default_score_threshold
     try:
         if torch is None:
             raise ImportError("WildDet3D server requires torch in the model-serving environment")
@@ -71,7 +73,10 @@ def load_model(
         except Exception:
             draw_3d_boxes = None
 
-        model = _build_model(build_model, str(checkpoint), score_threshold)
+        default_score_threshold = _validate_threshold(score_threshold)
+        # Keep model-side floors disabled so each request's threshold is
+        # authoritative; filtering is applied after inference below.
+        model = _build_model(build_model, str(checkpoint), 0.0)
         if hasattr(model, "eval"):
             model.eval()
         preprocess_fn = preprocess
@@ -87,6 +92,12 @@ def load_model(
 
 def _build_model(build_model, checkpoint_path: str, score_threshold: float):
     attempts = [
+        {
+            "checkpoint": checkpoint_path,
+            "score_threshold": score_threshold,
+            "score_3d_threshold": 0.0,
+            "skip_pretrained": True,
+        },
         {"checkpoint": checkpoint_path, "score_threshold": score_threshold, "skip_pretrained": True},
         {"checkpoint_path": checkpoint_path, "score_threshold": score_threshold, "skip_pretrained": True},
         {"checkpoint": checkpoint_path, "score_threshold": score_threshold},
@@ -121,18 +132,22 @@ def infer():
         data = request.get_json() or {}
         image = _decode_image(data.get("image"))
         text_prompt = _clean_prompt(data.get("text_prompt"))
-        boxes = data.get("boxes") or None
-        points = data.get("points") or None
+        boxes = _validate_boxes(data.get("boxes"), image.size)
+        points = _validate_points(data.get("points"), image.size)
 
-        if not text_prompt and not boxes and not points:
-            return jsonify({"success": False, "error": "Provide text_prompt, boxes, or points"}), 400
+        if sum(bool(value) for value in (text_prompt, boxes, points)) != 1:
+            return jsonify({"success": False, "error": "Provide exactly one prompt mode: text_prompt, boxes, or points"}), 400
+
+        threshold = _validate_threshold(
+            data.get("score_threshold", default_score_threshold)
+        )
 
         outputs = _run_wilddet3d(
             image=image,
             text_prompt=text_prompt,
             boxes=boxes,
             points=points,
-            score_threshold=float(data.get("score_threshold", 0.3)),
+            score_threshold=threshold,
         )
         (
             boxes_2d,
@@ -156,6 +171,8 @@ def infer():
             "boxes_2d": _to_list(boxes_2d),
             "boxes_3d": _to_list(boxes_3d),
             "scores": _to_list(scores),
+            "scores_2d": _to_list(scores_2d),
+            "scores_3d": _to_list(scores_3d),
             "class_names": class_names,
         }
 
@@ -194,32 +211,54 @@ def _run_wilddet3d(
     data = preprocess_fn(image_array)
     data = _move_to_device(data, _model_device())
 
-    kwargs = {
+    base_kwargs = {
         "images": data["images"],
         "intrinsics": data["intrinsics"][None],
         "input_hw": [data["input_hw"]],
         "original_hw": [data["original_hw"]],
         "padding": [data["padding"]],
     }
+    prompt_kwargs = []
     if text_prompt:
-        kwargs["input_texts"] = _split_prompt(text_prompt)
+        prompt_kwargs.append({"input_texts": _split_prompt(text_prompt)})
     elif boxes:
-        kwargs["input_boxes"] = boxes
-        kwargs["prompt_text"] = "geometric"
+        # The official predictor accepts one geometric box per image. Run
+        # each box against the same preprocessed image, then aggregate the
+        # aligned detections so the public API genuinely supports boxes=[...].
+        prompt_kwargs.extend(
+            {"input_boxes": [box], "prompt_text": "geometric"}
+            for box in boxes
+        )
     elif points:
-        kwargs["input_points"] = [points]
-        kwargs["prompt_text"] = "geometric"
+        prompt_kwargs.append(
+            {"input_points": [points], "prompt_text": "geometric"}
+        )
 
-    with torch.no_grad():
-        results = model(**kwargs)
+    batches = []
+    depth_maps = None
+    device = _model_device()
+    for prompt in prompt_kwargs:
+        kwargs = dict(base_kwargs)
+        kwargs.update(prompt)
+        autocast = (
+            torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+            if getattr(device, "type", None) == "cuda"
+            else _NullContext()
+        )
+        with torch.inference_mode(), autocast:
+            results = model(**kwargs)
+        if not isinstance(results, (list, tuple)) or len(results) != 7:
+            raise RuntimeError(
+                f"Unexpected WildDet3D output: expected 7 values, got {type(results).__name__}"
+            )
+        if depth_maps is None:
+            depth_maps = results[6]
+        batches.append(tuple(_first_batch(value) for value in results[:6]))
 
-    boxes_2d, boxes_3d, scores, scores_2d, scores_3d, class_ids, depth_maps = results
-    boxes_2d = _first_batch(boxes_2d)
-    boxes_3d = _first_batch(boxes_3d)
-    scores = _first_batch(scores)
-    scores_2d = _first_batch(scores_2d)
-    scores_3d = _first_batch(scores_3d)
-    class_ids = _first_batch(class_ids)
+    boxes_2d, boxes_3d, scores, scores_2d, scores_3d, class_ids = (
+        _concat_batches([batch[index] for batch in batches])
+        for index in range(6)
+    )
     boxes_2d, boxes_3d, scores, scores_2d, scores_3d, class_ids = _filter_by_score(
         boxes_2d,
         boxes_3d,
@@ -239,6 +278,25 @@ def _run_wilddet3d(
         depth_maps,
         data["original_intrinsics"],
     )
+
+
+class _NullContext:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback_obj):
+        return False
+
+
+def _concat_batches(values):
+    values = [value for value in values if value is not None]
+    if not values:
+        return None
+    if len(values) == 1:
+        return values[0]
+    if torch is not None and all(isinstance(value, torch.Tensor) for value in values):
+        return torch.cat(values, dim=0)
+    return np.concatenate([_to_numpy(value) for value in values], axis=0)
 
 
 def _first_batch(value):
@@ -292,18 +350,85 @@ def _take(value, keep):
 def _decode_image(image_b64: Optional[str]) -> Image.Image:
     if not image_b64:
         raise ValueError("Missing image data")
-    image_bytes = base64.b64decode(image_b64)
-    return Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    try:
+        image_bytes = base64.b64decode(image_b64, validate=True)
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            image.load()
+            return image.convert("RGB")
+    except Exception as e:
+        raise ValueError(f"Invalid encoded image: {e}") from e
 
 
 def _clean_prompt(prompt) -> Optional[str]:
     if isinstance(prompt, str) and prompt.strip():
-        return prompt.strip()
+        prompt = prompt.strip()
+        if len(prompt) > 1000:
+            raise ValueError("text_prompt must contain at most 1000 characters")
+        return prompt
     return None
 
 
 def _split_prompt(prompt: str) -> List[str]:
-    return [part.strip() for part in prompt.split(",") if part.strip()] or [prompt]
+    prompts = [part.strip() for part in prompt.replace(".", ",").split(",") if part.strip()]
+    if len(prompts) > 50:
+        raise ValueError("text_prompt must contain at most 50 categories")
+    return prompts or [prompt]
+
+
+def _validate_boxes(boxes, image_size) -> Optional[List[List[float]]]:
+    if boxes is None:
+        return None
+    if not isinstance(boxes, list) or not boxes:
+        raise ValueError("boxes must be a non-empty list of [x1, y1, x2, y2] prompts")
+    if len(boxes) > 20:
+        raise ValueError("boxes must contain at most 20 prompts")
+    width, height = image_size
+    normalized = []
+    for box in boxes:
+        if not isinstance(box, (list, tuple)) or len(box) != 4:
+            raise ValueError("Each box must have four values: [x1, y1, x2, y2]")
+        values = [float(value) for value in box]
+        if not all(math.isfinite(value) for value in values):
+            raise ValueError("Box coordinates must be finite numbers")
+        x1, y1, x2, y2 = values
+        if not (0 <= x1 < x2 <= width and 0 <= y1 < y2 <= height):
+            raise ValueError(
+                f"Each box must be a non-empty pixel xyxy region inside the {width}x{height} image"
+            )
+        normalized.append(values)
+    return normalized
+
+
+def _validate_points(points, image_size) -> Optional[List[List[float]]]:
+    if points is None:
+        return None
+    if not isinstance(points, list) or not points:
+        raise ValueError("points must be a non-empty list of [x, y, label] prompts")
+    if len(points) > 100:
+        raise ValueError("points must contain at most 100 prompts")
+    width, height = image_size
+    normalized = []
+    for point in points:
+        if not isinstance(point, (list, tuple)) or len(point) != 3:
+            raise ValueError("Each point must have three values: [x, y, label]")
+        x, y, label = (float(value) for value in point)
+        if not all(math.isfinite(value) for value in (x, y, label)):
+            raise ValueError("Point coordinates and labels must be finite numbers")
+        if label not in (0.0, 1.0):
+            raise ValueError("Point labels must be 0 (background) or 1 (foreground)")
+        if not (0 <= x < width and 0 <= y < height):
+            raise ValueError(f"Each point must lie inside the {width}x{height} image")
+        normalized.append([x, y, int(label)])
+    if not any(point[2] == 1 for point in normalized):
+        raise ValueError("At least one point must have foreground label 1")
+    return normalized
+
+
+def _validate_threshold(value) -> float:
+    value = float(value)
+    if not math.isfinite(value) or value < 0.0:
+        raise ValueError("score_threshold must be a finite number greater than or equal to 0")
+    return value
 
 
 def _class_vocabulary(text_prompt: Optional[str]) -> List[str]:
@@ -344,9 +469,12 @@ def _to_numpy(value):
     if value is None:
         return None
     if hasattr(value, "detach"):
-        return value.detach().cpu().numpy()
+        value = value.detach().cpu()
+        if torch is not None and value.dtype == torch.bfloat16:
+            value = value.float()
+        return value.numpy()
     if isinstance(value, (list, tuple)) and value and hasattr(value[0], "detach"):
-        value = [v.detach().cpu().numpy() for v in value]
+        value = [_to_numpy(v) for v in value]
     return np.asarray(value)
 
 
@@ -365,8 +493,13 @@ def _encode_depth(depth_maps) -> str:
     if depth.ndim > 2:
         depth = depth[0]
     depth = depth.astype(np.float32)
-    depth = depth - np.nanmin(depth)
-    depth = depth / max(float(np.nanmax(depth)), 1e-6)
+    finite = np.isfinite(depth)
+    if not finite.any():
+        return ""
+    minimum = float(depth[finite].min())
+    depth = np.where(finite, depth, minimum)
+    depth = depth - minimum
+    depth = depth / max(float(depth.max()), 1e-6)
     image = Image.fromarray((depth * 255).astype(np.uint8), mode="L")
     return _encode_png(image)
 
@@ -381,6 +514,9 @@ def _visualize(
     class_vocabulary: List[str],
     intrinsics,
 ) -> str:
+    boxes_2d_np = _to_numpy(boxes_2d)
+    if boxes_2d_np is None or boxes_2d_np.size == 0:
+        return _encode_png(image)
     if draw_3d_boxes_fn is not None:
         try:
             import tempfile

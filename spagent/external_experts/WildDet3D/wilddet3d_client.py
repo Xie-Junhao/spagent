@@ -2,6 +2,7 @@ import base64
 import io
 import logging
 import os
+import uuid
 from pathlib import Path
 from tempfile import gettempdir
 from typing import Any, Dict, List, Optional
@@ -72,16 +73,27 @@ class WildDet3DClient:
         return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
     def _save_outputs(self, data: Dict[str, Any], stem: str) -> Dict[str, Any]:
+        run_id = uuid.uuid4().hex[:8]
         output_image = data.pop("output_image", None)
         if output_image:
-            output_path = self.output_dir / f"{stem}_wilddet3d.png"
-            output_path.write_bytes(base64.b64decode(output_image))
+            output_path = self.output_dir / f"{stem}_wilddet3d_{run_id}.png"
+            output_path.write_bytes(self._decode_image_output(output_image, "visualization"))
             data["output_path"] = str(output_path)
 
         depth_image = data.pop("depth_image", None)
         if depth_image:
-            depth_path = self.output_dir / f"{stem}_wilddet3d_depth.png"
-            depth_path.write_bytes(base64.b64decode(depth_image))
+            depth_path = self.output_dir / f"{stem}_wilddet3d_depth_{run_id}.png"
+            depth_path.write_bytes(self._decode_image_output(depth_image, "depth"))
             data["depth_path"] = str(depth_path)
 
         return data
+
+    @staticmethod
+    def _decode_image_output(encoded: str, kind: str) -> bytes:
+        try:
+            raw = base64.b64decode(encoded, validate=True)
+            with Image.open(io.BytesIO(raw)) as image:
+                image.verify()
+            return raw
+        except Exception as e:
+            raise ValueError(f"WildDet3D returned an invalid {kind} image: {e}") from e
