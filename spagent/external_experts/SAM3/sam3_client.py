@@ -2,7 +2,7 @@ import base64
 import logging
 import os
 import tempfile
-import time
+import uuid
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -129,7 +129,7 @@ class SAM3Client:
 
     def _save_image_outputs(self, image_path: str, image: np.ndarray, result: Dict, save_overlay: bool) -> Dict:
         stem = Path(image_path).stem
-        timestamp = int(time.time())
+        run_id = uuid.uuid4().hex[:12]
         masks = result.get("masks", [])
         boxes = result.get("boxes", [])
         scores = result.get("scores", [])
@@ -155,22 +155,22 @@ class SAM3Client:
                 x1, y1, x2, y2 = [int(v) for v in boxes[idx]]
                 cv2.rectangle(overlay, (x1, y1), (x2, y2), color, 2)
 
-            mask_path = os.path.join(self.output_dir, f"sam3_mask_{stem}_{timestamp}_{idx}.png")
-            cv2.imwrite(mask_path, mask_array)
+            mask_path = os.path.join(self.output_dir, f"sam3_mask_{stem}_{run_id}_{idx}.png")
+            self._write_image(mask_path, mask_array)
             mask_record = dict(mask_info)
             mask_record.pop("mask", None)
             mask_record["mask_path"] = mask_path
             mask_records.append(mask_record)
 
-        mask_path = os.path.join(self.output_dir, f"sam3_mask_{stem}_{timestamp}.png")
-        overlay_path = os.path.join(self.output_dir, f"sam3_overlay_{stem}_{timestamp}.png")
-        output_path = os.path.join(self.output_dir, f"sam3_combined_{stem}_{timestamp}.png")
+        mask_path = os.path.join(self.output_dir, f"sam3_mask_{stem}_{run_id}.png")
+        overlay_path = os.path.join(self.output_dir, f"sam3_overlay_{stem}_{run_id}.png")
+        output_path = os.path.join(self.output_dir, f"sam3_combined_{stem}_{run_id}.png")
 
-        cv2.imwrite(mask_path, combined_mask)
+        self._write_image(mask_path, combined_mask)
         if save_overlay:
-            cv2.imwrite(overlay_path, overlay)
+            self._write_image(overlay_path, overlay)
             combined = np.vstack([image, overlay])
-            cv2.imwrite(output_path, combined)
+            self._write_image(output_path, combined)
         else:
             overlay_path = None
             output_path = None
@@ -191,24 +191,32 @@ class SAM3Client:
 
     def _save_video_outputs(self, video_path: str, result: Dict, save_overlay: bool) -> Dict:
         stem = Path(video_path).stem
-        timestamp = int(time.time())
-        output_path = os.path.join(self.output_dir, f"sam3_video_{stem}_{timestamp}.mp4")
+        run_id = uuid.uuid4().hex[:12]
+        result = dict(result)
+        output_path = os.path.join(self.output_dir, f"sam3_video_{stem}_{run_id}.mp4")
         video_b64 = result.pop("video", None)
-        if video_b64 and save_overlay:
+        if save_overlay:
+            if not video_b64:
+                raise ValueError("SAM3 server did not return the requested overlay video.")
+            video_bytes = base64.b64decode(video_b64, validate=True)
+            if len(video_bytes) < 12 or b"ftyp" not in video_bytes[4:12]:
+                raise ValueError("SAM3 server returned an invalid MP4 overlay.")
             with open(output_path, "wb") as f:
-                f.write(base64.b64decode(video_b64))
+                f.write(video_bytes)
             result["output_path"] = output_path
             result["video_path"] = output_path
         else:
             result["output_path"] = None
             result["video_path"] = None
 
-        mask_dir = Path(self.output_dir) / f"sam3_video_{stem}_{timestamp}_masks"
+        mask_dir = Path(self.output_dir) / f"sam3_video_{stem}_{run_id}_masks"
         mask_dir.mkdir(parents=True, exist_ok=True)
         frame_records = []
         flat_mask_paths = []
         for frame_record in result.pop("frame_masks", []) or []:
             frame_index = int(frame_record.get("frame_index", len(frame_records)))
+            if frame_index < 0:
+                raise ValueError("SAM3 server returned a negative frame index.")
             saved_paths = []
             for instance_index, mask_record in enumerate(frame_record.get("masks", []) or []):
                 encoded = mask_record.get("mask") if isinstance(mask_record, dict) else mask_record
@@ -261,8 +269,16 @@ class SAM3Client:
     def _decode_mask(self, mask_b64: Optional[str]) -> Optional[np.ndarray]:
         if not mask_b64:
             return None
-        mask_bytes = base64.b64decode(mask_b64)
-        return cv2.imdecode(np.frombuffer(mask_bytes, np.uint8), cv2.IMREAD_GRAYSCALE)
+        mask_bytes = base64.b64decode(mask_b64, validate=True)
+        mask = cv2.imdecode(np.frombuffer(mask_bytes, np.uint8), cv2.IMREAD_GRAYSCALE)
+        if mask is None:
+            raise ValueError("SAM3 server returned an invalid PNG mask.")
+        return mask
+
+    @staticmethod
+    def _write_image(path: str, image: np.ndarray) -> None:
+        if not cv2.imwrite(path, image):
+            raise OSError(f"Unable to save SAM3 image artifact: {path}")
 
     def _color(self, idx: int):
         colors = [
