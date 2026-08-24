@@ -116,20 +116,37 @@ class MockSAM3Service:
         except ImportError as e:
             return {"success": False, "error": f"OpenCV is required for video mock: {e}"}
 
-        cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened():
-            return {"success": False, "error": f"Unable to open video: {video_path}"}
-
-        fps = cap.get(cv2.CAP_PROP_FPS) or 5.0
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        source = Path(video_path)
+        cap = None
+        frame_paths = None
+        if source.is_dir():
+            frame_paths = [
+                path for path in source.iterdir()
+                if path.is_file() and path.suffix.lower() in {".jpg", ".jpeg"}
+            ]
+            frame_paths.sort(key=self._frame_sort_key)
+            if not frame_paths:
+                return {"success": False, "error": f"No JPEG frames found: {video_path}"}
+            first_frame = cv2.imread(str(frame_paths[0]))
+            if first_frame is None:
+                return {"success": False, "error": f"Unable to read frame: {frame_paths[0]}"}
+            height, width = first_frame.shape[:2]
+            fps = 5.0
+        else:
+            cap = cv2.VideoCapture(video_path)
+            if not cap.isOpened():
+                return {"success": False, "error": f"Unable to open video: {video_path}"}
+            fps = cap.get(cv2.CAP_PROP_FPS) or 5.0
+            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         os.makedirs(self.output_dir, exist_ok=True)
         timestamp = int(time.time())
         stem = Path(video_path).stem
         output_path = os.path.join(self.output_dir, f"sam3_mock_video_{stem}_{timestamp}.mp4")
         writer = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
         if not writer.isOpened():
-            cap.release()
+            if cap is not None:
+                cap.release()
             return {"success": False, "error": "Unable to create output video writer."}
 
         boxes = self._boxes_for_prompt(text_prompt, width, height, max(1, min(int(max_instances), 2)))
@@ -138,9 +155,17 @@ class MockSAM3Service:
         mask_dir.mkdir(parents=True, exist_ok=True)
         frame_masks = []
         while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
+            if frame_paths is not None:
+                if frame_count >= len(frame_paths):
+                    break
+                frame = cv2.imread(str(frame_paths[frame_count]))
+                if frame is None:
+                    writer.release()
+                    return {"success": False, "error": f"Unable to read frame: {frame_paths[frame_count]}"}
+            else:
+                ret, frame = cap.read()
+                if not ret:
+                    break
             overlay = frame.copy()
             mask_paths = []
             for idx, box in enumerate(boxes):
@@ -159,7 +184,8 @@ class MockSAM3Service:
             frame_masks.append({"frame_index": frame_count, "mask_paths": mask_paths})
             frame_count += 1
 
-        cap.release()
+        if cap is not None:
+            cap.release()
         writer.release()
         return {
             "success": True,
@@ -177,6 +203,12 @@ class MockSAM3Service:
             "frame_mask_paths": [path for record in frame_masks for path in record["mask_paths"]],
             "mask_frames_dir": str(mask_dir),
         }
+
+    @staticmethod
+    def _frame_sort_key(path: Path):
+        if path.stem.isdigit():
+            return 0, int(path.stem)
+        return 1, path.name.lower()
 
     def _boxes_for_prompt(self, text_prompt: str, width: int, height: int, count: int) -> List[Tuple[int, int, int, int]]:
         digest = hashlib.sha256(text_prompt.encode("utf-8")).digest()
