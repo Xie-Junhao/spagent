@@ -73,6 +73,10 @@ EPISODE_PROMPTS = {
     "image_generation": "Generate an image of a dog running on a beach using the available tool and report where it was saved.",
 }
 
+TOOL_EPISODE_PROMPTS = {
+    "crop": "Crop the main subject tightly from this image using the available tool and report where the crop was saved.",
+}
+
 
 # ---------------------------------------------------------------------------
 # Provider adapters (all implement the SPAgent Model interface)
@@ -212,7 +216,7 @@ def run_episode(entry, model, url, prompt):
         return False, [f"tool build failed: {'; '.join(errs)}"[:150]]
     tool = tools[0]
 
-    prompt = prompt or EPISODE_PROMPTS.get(entry.category)
+    prompt = prompt or TOOL_EPISODE_PROMPTS.get(entry.key) or EPISODE_PROMPTS.get(entry.category)
     if not prompt:
         return False, [f"no default episode prompt for category {entry.category!r} "
                        "(e.g. video_generation is paid) — pass --prompt to run anyway"]
