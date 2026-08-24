@@ -1274,8 +1274,7 @@ print(result["answer"])
 
 ```bash
 export DASHSCOPE_API_KEY="your_api_key"
-
-# 可选：百炼业务空间专属地址
+# 工作空间地域必须与 API Key 地域一致
 export DASHSCOPE_BASE_URL="https://YOUR_WORKSPACE_ID.cn-beijing.maas.aliyuncs.com/api/v1"
 ```
 

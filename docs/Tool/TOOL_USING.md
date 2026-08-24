@@ -1559,8 +1559,7 @@ python test/test_tool.py --tool oneformer --image assets/dog.jpeg --seg_task pan
 
 ```bash
 export DASHSCOPE_API_KEY="your_api_key"
-
-# Optional workspace-specific Model Studio endpoint
+# The workspace region must match the API key region
 export DASHSCOPE_BASE_URL="https://YOUR_WORKSPACE_ID.cn-beijing.maas.aliyuncs.com/api/v1"
 ```
 

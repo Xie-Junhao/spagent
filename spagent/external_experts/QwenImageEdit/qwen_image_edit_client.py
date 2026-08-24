@@ -51,9 +51,13 @@ class QwenImageEditClient:
             raise ValueError("model must be a non-empty string")
 
         self.model = model.strip()
-        base_url_value = (
-            base_url or os.environ.get("DASHSCOPE_BASE_URL") or DEFAULT_BASE_URL
-        )
+        configured_base_url = base_url or os.environ.get("DASHSCOPE_BASE_URL")
+        if self.model.startswith("qwen-image-2.0") and not configured_base_url:
+            raise ValueError(
+                "qwen-image-2.0 requires a Model Studio workspace endpoint. "
+                "Set DASHSCOPE_BASE_URL or pass base_url."
+            )
+        base_url_value = configured_base_url or DEFAULT_BASE_URL
         if not isinstance(base_url_value, str) or not base_url_value.strip():
             raise ValueError("base_url must be a non-empty HTTP(S) URL.")
         resolved_base_url = base_url_value.strip().rstrip("/")
@@ -160,10 +164,10 @@ class QwenImageEditClient:
                     return {
                         "success": False,
                         "error": "Qwen Image Edit returned no output image URL.",
-                        "request_id": data.get("request_id"),
+                        "request_id": self._request_id(data),
                     }
 
-                request_id = data.get("request_id") or uuid.uuid4().hex
+                request_id = self._request_id(data) or uuid.uuid4().hex
                 image_paths_out: List[str] = []
                 try:
                     for index, url in enumerate(image_urls, start=1):
@@ -321,7 +325,7 @@ class QwenImageEditClient:
     def _api_error(self, status_code: int, data: Dict[str, Any]) -> Dict[str, Any]:
         code = self._redact_api_value(data.get("code") or "APIError")
         message = self._redact_api_value(data.get("message") or f"HTTP {status_code}")
-        raw_request_id = data.get("request_id")
+        raw_request_id = self._request_id(data)
         request_id = (
             self._redact_api_value(raw_request_id)
             if raw_request_id is not None
@@ -333,6 +337,10 @@ class QwenImageEditClient:
             "error": f"Qwen Image Edit API error {code}: {message}{suffix}",
             "request_id": request_id,
         }
+
+    @staticmethod
+    def _request_id(data: Dict[str, Any]) -> Any:
+        return data.get("request_id") or data.get("requestId")
 
     def _redact_api_value(self, value: Any) -> str:
         return str(value).replace(self.api_key, "[REDACTED]")

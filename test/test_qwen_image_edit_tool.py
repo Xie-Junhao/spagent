@@ -39,6 +39,7 @@ requires_httpx = pytest.mark.skipif(
     importlib.util.find_spec("httpx") is None,
     reason="httpx is not installed in this test environment",
 )
+TEST_BASE_URL = "https://workspace.test/api/v1"
 
 
 def test_tool_is_exported_and_schema_is_valid():
@@ -178,6 +179,7 @@ def test_http_client_applies_model_specific_size_limits(tmp_path):
     client = QwenImageEditClient(
         api_key="test-key",
         model="qwen-image-2.0",
+        base_url=TEST_BASE_URL,
         output_dir=str(tmp_path),
     )
     client._validate_size("2688*1536")
@@ -189,6 +191,18 @@ def test_http_client_applies_model_specific_size_limits(tmp_path):
     )
     with pytest.raises(ValueError, match="width and height"):
         plus_client._validate_size("2688*1536")
+
+
+@requires_httpx
+def test_qwen_image_2_requires_workspace_endpoint(monkeypatch):
+    from spagent.external_experts.QwenImageEdit import QwenImageEditClient
+
+    monkeypatch.delenv("DASHSCOPE_BASE_URL", raising=False)
+    with pytest.raises(ValueError, match="workspace endpoint"):
+        QwenImageEditClient(api_key="test-key", model="qwen-image-2.0")
+
+    legacy = QwenImageEditClient(api_key="test-key", model="qwen-image-edit")
+    assert legacy.base_url == "https://dashscope.aliyuncs.com/api/v1"
 
 
 def test_catalog_builds_tool_and_resolves_function_name():
@@ -348,7 +362,7 @@ def test_http_client_matches_official_request_and_downloads_png(
                         ]
                     },
                     "usage": {"image_count": 2, "width": 80, "height": 64},
-                    "request_id": "request/unsafe id",
+                    "requestId": "request/unsafe id",
                 },
             )
         assert str(request.url) in (
@@ -443,6 +457,7 @@ def test_http_client_uses_decoded_image_mime_type(tmp_path):
     client = QwenImageEditClient(
         api_key="test-key",
         output_dir=str(tmp_path / "out"),
+        base_url=TEST_BASE_URL,
         http_client=http_client,
     )
     try:
@@ -479,6 +494,7 @@ def test_http_client_hides_signed_output_url_on_download_error(source_images, tm
     client = QwenImageEditClient(
         api_key="test-key",
         output_dir=str(tmp_path),
+        base_url=TEST_BASE_URL,
         http_client=http_client,
     )
     try:
@@ -495,7 +511,7 @@ def test_http_client_rejects_invalid_timeout():
     from spagent.external_experts.QwenImageEdit import QwenImageEditClient
 
     with pytest.raises(ValueError, match="positive finite"):
-        QwenImageEditClient(api_key="test-key", timeout=0)
+        QwenImageEditClient(api_key="test-key", base_url=TEST_BASE_URL, timeout=0)
 
 
 @requires_httpx
@@ -521,7 +537,7 @@ def test_http_client_surfaces_api_error_without_key(source_images, tmp_path):
             json={
                 "code": "InvalidApiKey",
                 "message": "invalid key test-secret",
-                "request_id": "req-1",
+                "requestId": "req-1",
             },
         )
 
@@ -529,6 +545,7 @@ def test_http_client_surfaces_api_error_without_key(source_images, tmp_path):
     client = QwenImageEditClient(
         api_key="test-secret",
         output_dir=str(tmp_path),
+        base_url=TEST_BASE_URL,
         http_client=http_client,
     )
     try:
@@ -571,6 +588,7 @@ def test_http_client_rejects_non_image_download(source_images, tmp_path):
     client = QwenImageEditClient(
         api_key="test-key",
         output_dir=str(tmp_path),
+        base_url=TEST_BASE_URL,
         http_client=http_client,
     )
     try:
@@ -615,6 +633,7 @@ def test_http_client_removes_partial_multi_image_download(source_images, tmp_pat
     client = QwenImageEditClient(
         api_key="test-key",
         output_dir=str(tmp_path),
+        base_url=TEST_BASE_URL,
         http_client=http_client,
     )
     try:
