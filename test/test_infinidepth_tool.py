@@ -36,8 +36,10 @@ def test_infinidepth_schema_contains_inputs():
     params = tool.parameters
 
     assert "image_path" in params["required"]
-    for key in ["task", "save_pcd", "upsample_ratio", "output_dir"]:
+    for key in ["task", "save_pcd", "upsample_ratio", "output_resolution_mode", "output_dir"]:
         assert key in params["properties"]
+    assert params["properties"]["output_resolution_mode"]["default"] == "original"
+    assert params["properties"]["upsample_ratio"]["maximum"] == 4
 
 
 def test_infinidepth_mock_depth(tmp_path, sample_image_path):
@@ -53,6 +55,35 @@ def test_infinidepth_mock_depth(tmp_path, sample_image_path):
     assert os.path.exists(result["depth_path"])
     assert os.path.exists(result["colored_depth_path"])
     assert result["shape"] == [96, 128]
+    assert result["source_shape"] == [96, 128]
+    assert result["output_resolution_mode"] == "original"
+
+
+def test_infinidepth_mock_upsample_reports_actual_shape(tmp_path, sample_image_path):
+    tool = InfiniDepthTool(use_mock=True, output_dir=str(tmp_path))
+
+    result = tool.call(
+        image_path=sample_image_path,
+        output_resolution_mode="upsample",
+        upsample_ratio=2,
+    )
+
+    assert result["success"] is True
+    assert result["shape"] == [192, 256]
+    assert result["source_shape"] == [96, 128]
+    with Image.open(result["depth_path"]) as depth:
+        assert depth.size == (256, 192)
+
+
+def test_infinidepth_mock_outputs_are_unique(tmp_path, sample_image_path):
+    tool = InfiniDepthTool(use_mock=True, output_dir=str(tmp_path))
+
+    first = tool.call(image_path=sample_image_path, save_pcd=True)
+    second = tool.call(image_path=sample_image_path, save_pcd=True)
+
+    assert first["depth_path"] != second["depth_path"]
+    assert first["colored_depth_path"] != second["colored_depth_path"]
+    assert first["point_cloud_path"] != second["point_cloud_path"]
 
 
 def test_infinidepth_mock_pcd(tmp_path, sample_image_path):
@@ -90,11 +121,24 @@ def test_infinidepth_rejects_invalid_upsample(sample_image_path):
     result = tool.call(image_path=sample_image_path, upsample_ratio=0)
 
     assert result["success"] is False
-    assert "upsample_ratio must be a positive integer" in result["error"]
+    assert "upsample_ratio must be an integer in [1, 4]" in result["error"]
 
     fractional = tool.call(image_path=sample_image_path, upsample_ratio=1.5)
     assert fractional["success"] is False
-    assert "upsample_ratio must be a positive integer" in fractional["error"]
+    assert "upsample_ratio must be an integer in [1, 4]" in fractional["error"]
+
+    too_large = tool.call(image_path=sample_image_path, upsample_ratio=5)
+    assert too_large["success"] is False
+    assert "integer in [1, 4]" in too_large["error"]
+
+
+def test_infinidepth_rejects_invalid_resolution_mode(sample_image_path):
+    tool = InfiniDepthTool(use_mock=True)
+
+    result = tool.call(image_path=sample_image_path, output_resolution_mode="specific")
+
+    assert result["success"] is False
+    assert "original' or 'upsample" in result["error"]
 
 
 def test_infinidepth_server_subprocess_path(tmp_path, sample_image_path):
@@ -126,13 +170,52 @@ def test_infinidepth_server_subprocess_path(tmp_path, sample_image_path):
         run_dir=tmp_path / "run",
         save_pcd=False,
         upsample_ratio=1,
+        output_resolution_mode="original",
+        source_shape=[96, 128],
     )
 
     assert result["success"] is True
-    assert result["depth_image"]
     assert result["colored_depth_image"]
     assert result["shape"] == [12, 16]
     assert result["depth_shape"] == [12, 16]
+    assert result["source_shape"] == [96, 128]
+    assert "--output_resolution_mode=original" in result["command"]
+
+
+def test_infinidepth_client_saves_unique_valid_artifacts(tmp_path):
+    import base64
+    import io
+
+    from spagent.external_experts.InfiniDepth.infinidepth_client import InfiniDepthClient
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (8, 6), color="red").save(buffer, format="PNG")
+    payload = base64.b64encode(buffer.getvalue()).decode()
+    client = InfiniDepthClient(output_dir=str(tmp_path))
+
+    first = client._save_outputs({"success": True, "colored_depth_image": payload}, "sample", None)
+    second = client._save_outputs({"success": True, "colored_depth_image": payload}, "sample", None)
+
+    assert first["depth_path"] == first["colored_depth_path"]
+    assert first["colored_depth_path"] != second["colored_depth_path"]
+    with Image.open(first["depth_path"]) as image:
+        assert image.size == (8, 6)
+
+
+def test_infinidepth_requires_requested_point_cloud(tmp_path, sample_image_path):
+    tool = InfiniDepthTool(use_mock=True, output_dir=str(tmp_path))
+    original_infer = tool._client.infer
+
+    def without_pcd(**kwargs):
+        result = original_infer(**{**kwargs, "save_pcd": False})
+        result["point_cloud_path"] = None
+        return result
+
+    tool._client.infer = without_pcd
+    result = tool.call(image_path=sample_image_path, save_pcd=True)
+
+    assert result["success"] is False
+    assert "requested point cloud" in result["error"]
 
 
 @pytest.mark.skipif(

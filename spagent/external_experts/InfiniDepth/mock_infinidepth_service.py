@@ -1,5 +1,7 @@
 """Deterministic mock service for InfiniDepth tests."""
 
+import uuid
+
 from pathlib import Path
 from tempfile import gettempdir
 from typing import Any, Dict, Optional
@@ -17,6 +19,7 @@ class MockInfiniDepthService:
         image_path: str,
         save_pcd: bool = False,
         upsample_ratio: float = 2,
+        output_resolution_mode: str = "original",
         output_dir: Optional[str] = None,
     ) -> Dict[str, Any]:
         path = Path(image_path)
@@ -27,17 +30,22 @@ class MockInfiniDepthService:
 
         with Image.open(path) as image:
             width, height = image.size
+        source_shape = [height, width]
+        if output_resolution_mode == "upsample":
+            width *= int(upsample_ratio)
+            height *= int(upsample_ratio)
         depth = _gradient_depth(width, height)
         colored = _colored_depth(width, height)
 
-        depth_path = out_dir / f"{path.stem}_infinidepth_depth.png"
-        colored_path = out_dir / f"{path.stem}_infinidepth_colored.png"
+        run_id = uuid.uuid4().hex[:8]
+        depth_path = out_dir / f"{path.stem}_infinidepth_{run_id}_depth.png"
+        colored_path = out_dir / f"{path.stem}_infinidepth_{run_id}_colored.png"
         depth.save(depth_path)
         colored.save(colored_path)
 
         point_cloud_path = None
         if save_pcd:
-            point_cloud_path = out_dir / f"{path.stem}_infinidepth.ply"
+            point_cloud_path = out_dir / f"{path.stem}_infinidepth_{run_id}.ply"
             _write_mock_ply(point_cloud_path)
 
         return {
@@ -48,7 +56,10 @@ class MockInfiniDepthService:
             "point_cloud_path": str(point_cloud_path) if point_cloud_path else None,
             "output_dir": str(out_dir),
             "shape": [height, width],
+            "source_shape": source_shape,
+            "depth_shape": [height, width],
             "upsample_ratio": upsample_ratio,
+            "output_resolution_mode": output_resolution_mode,
         }
 
 

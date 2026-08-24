@@ -2,8 +2,8 @@ import argparse
 import base64
 import io
 import logging
+import math
 import os
-import shutil
 import subprocess
 import tempfile
 import traceback
@@ -43,10 +43,12 @@ def configure(
     repo_path: str,
     depth_model_path: str,
     moge2_model_path: Optional[str] = None,
-    output_resolution_mode: str = "upsample",
+    output_resolution_mode: str = "original",
     python_bin: Optional[str] = None,
 ) -> None:
     global config
+    if output_resolution_mode not in {"original", "upsample"}:
+        raise ValueError("output_resolution_mode must be 'original' or 'upsample'")
     config = {
         "repo_path": str(Path(repo_path).resolve()),
         "depth_model_path": str(Path(depth_model_path).resolve()),
@@ -87,6 +89,13 @@ def infer():
         filename = data.get("filename") or "input.png"
         save_pcd = bool(data.get("save_pcd", False))
         upsample_ratio = _positive_integer(data.get("upsample_ratio", 2), "upsample_ratio")
+        output_resolution_mode = data.get(
+            "output_resolution_mode", config.get("output_resolution_mode", "original")
+        )
+        if output_resolution_mode not in {"original", "upsample"}:
+            return jsonify(
+                {"success": False, "error": "output_resolution_mode must be 'original' or 'upsample'"}
+            ), 400
 
         with tempfile.TemporaryDirectory(prefix="infinidepth_") as tmp:
             tmp_dir = Path(tmp)
@@ -99,6 +108,7 @@ def infer():
                 run_dir=run_dir,
                 save_pcd=save_pcd,
                 upsample_ratio=upsample_ratio,
+                output_resolution_mode=output_resolution_mode,
                 source_shape=[image.height, image.width],
             )
             return jsonify(result)
@@ -113,6 +123,7 @@ def _run_infinidepth(
     run_dir: Path,
     save_pcd: bool,
     upsample_ratio: int,
+    output_resolution_mode: Optional[str] = None,
     source_shape=None,
 ) -> Dict[str, Any]:
     repo = Path(config["repo_path"])
@@ -129,7 +140,7 @@ def _run_infinidepth(
         f"--input_image_path={input_path}",
         "--model_type=InfiniDepth",
         f"--depth_model_path={model_path}",
-        f"--output_resolution_mode={config.get('output_resolution_mode', 'upsample')}",
+        f"--output_resolution_mode={output_resolution_mode or config.get('output_resolution_mode', 'original')}",
         f"--upsample_ratio={upsample_ratio}",
         f"--depth_output_dir={run_dir / 'pred_depth'}",
         f"--pcd_output_dir={run_dir / 'pred_pcd'}",
@@ -169,20 +180,27 @@ def _run_infinidepth(
         "command": command,
         "stdout": completed.stdout[-2000:],
         "stderr": completed.stderr[-2000:],
+        "output_resolution_mode": output_resolution_mode or config.get("output_resolution_mode", "original"),
     }
     depth_artifact = files.get("depth") or files.get("colored_depth")
     if depth_artifact:
         with Image.open(depth_artifact) as depth_image:
             response["depth_shape"] = [depth_image.height, depth_image.width]
-    response["shape"] = list(source_shape or response.get("depth_shape") or [])
-    if files.get("depth"):
-        response["depth_image"] = _encode_file(files["depth"])
-    if files.get("colored_depth"):
-        response["colored_depth_image"] = _encode_file(files["colored_depth"])
-    elif files.get("depth"):
-        response["colored_depth_image"] = _encode_file(files["depth"])
+    response["shape"] = list(response.get("depth_shape") or [])
+    response["source_shape"] = list(source_shape or [])
+    visualization = files.get("colored_depth") or files.get("depth")
+    if visualization:
+        response["colored_depth_image"] = _encode_file(visualization)
     if files.get("point_cloud"):
         response["point_cloud"] = _encode_file(files["point_cloud"])
+    elif save_pcd:
+        return {
+            "success": False,
+            "error": "InfiniDepth command completed but no requested point cloud was found",
+            "command": command,
+            "stdout": completed.stdout[-2000:],
+            "stderr": completed.stderr[-2000:],
+        }
     return response
 
 
@@ -207,7 +225,13 @@ def _collect_outputs(run_dir: Path) -> Dict[str, Optional[Path]]:
 
 
 def _decode_image(image_b64: str) -> Image.Image:
-    return Image.open(io.BytesIO(base64.b64decode(image_b64))).convert("RGB")
+    try:
+        raw = base64.b64decode(image_b64, validate=True)
+        with Image.open(io.BytesIO(raw)) as image:
+            image.load()
+            return image.convert("RGB")
+    except Exception as e:
+        raise ValueError(f"Invalid encoded image: {e}") from e
 
 
 def _encode_file(path: Path) -> str:
@@ -216,8 +240,8 @@ def _encode_file(path: Path) -> str:
 
 def _positive_integer(value, name: str) -> int:
     number = float(value)
-    if number <= 0 or not number.is_integer():
-        raise ValueError(f"{name} must be a positive integer")
+    if not math.isfinite(number) or not 1 <= number <= 4 or not number.is_integer():
+        raise ValueError(f"{name} must be an integer in [1, 4]")
     return int(number)
 
 
@@ -227,7 +251,11 @@ if __name__ == "__main__":
     parser.add_argument("--depth_model_path", type=str, required=True, help="Path to infinidepth.ckpt")
     parser.add_argument("--port", type=int, default=20039, help="Port to run the server on")
     parser.add_argument("--python_bin", type=str, default=None, help="Python executable for the InfiniDepth environment")
-    parser.add_argument("--output_resolution_mode", type=str, default="upsample")
+    parser.add_argument(
+        "--output_resolution_mode",
+        choices=["original", "upsample"],
+        default="original",
+    )
     parser.add_argument("--moge2_model_path", type=str, default=None, help="Path to MoGe-2 model.pt")
     args = parser.parse_args()
 

@@ -2,6 +2,7 @@ import base64
 import io
 import logging
 import os
+import uuid
 from pathlib import Path
 from tempfile import gettempdir
 from typing import Any, Dict, Optional
@@ -34,6 +35,7 @@ class InfiniDepthClient:
         image_path: str,
         save_pcd: bool = False,
         upsample_ratio: int = 2,
+        output_resolution_mode: str = "original",
         output_dir: Optional[str] = None,
     ) -> Dict[str, Any]:
         path = Path(image_path)
@@ -44,6 +46,7 @@ class InfiniDepthClient:
             "filename": path.name,
             "save_pcd": save_pcd,
             "upsample_ratio": upsample_ratio,
+            "output_resolution_mode": output_resolution_mode,
         }
         try:
             response = requests.post(f"{self.server_url}/infer", json=payload, timeout=1800)
@@ -68,6 +71,7 @@ class InfiniDepthClient:
     def _save_outputs(self, data: Dict[str, Any], stem: str, output_dir: Optional[str]) -> Dict[str, Any]:
         out_dir = Path(output_dir) if output_dir else self.output_dir
         out_dir.mkdir(parents=True, exist_ok=True)
+        run_id = uuid.uuid4().hex[:8]
 
         for key, suffix, field in [
             ("depth_image", "depth.png", "depth_path"),
@@ -76,9 +80,18 @@ class InfiniDepthClient:
         ]:
             encoded = data.pop(key, None)
             if encoded:
-                path = out_dir / f"{stem}_infinidepth_{suffix}"
-                path.write_bytes(base64.b64decode(encoded))
+                path = out_dir / f"{stem}_infinidepth_{run_id}_{suffix}"
+                raw = base64.b64decode(encoded, validate=True)
+                if suffix.endswith(".png"):
+                    with Image.open(io.BytesIO(raw)) as image:
+                        image.verify()
+                elif not raw.startswith(b"ply") and not raw.startswith(b"# .PCD"):
+                    raise ValueError("InfiniDepth returned an invalid point-cloud artifact")
+                path.write_bytes(raw)
                 data[field] = str(path)
+
+        if not data.get("depth_path") and data.get("colored_depth_path"):
+            data["depth_path"] = data["colored_depth_path"]
 
         data["output_dir"] = str(out_dir)
         return data
