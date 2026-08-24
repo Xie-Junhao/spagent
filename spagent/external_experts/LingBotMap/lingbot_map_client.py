@@ -1,8 +1,10 @@
 import base64
 import io
+import json
 import logging
 import os
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -77,6 +79,9 @@ class LingBotMapClient:
         out_dir = Path(output_dir) if output_dir else self.output_dir
         out_dir.mkdir(parents=True, exist_ok=True)
 
+        data = dict(data)
+        run_id = uuid.uuid4().hex[:12]
+        decoded_outputs = []
         for key, filename, path_field in [
             ("preview_image", "lingbot_map_preview.png", "preview_path"),
             ("trajectory_json", "trajectory.json", "trajectory_path"),
@@ -87,9 +92,40 @@ class LingBotMapClient:
         ]:
             encoded = data.pop(key, None)
             if encoded:
-                path = out_dir / filename
-                path.write_bytes(base64.b64decode(encoded))
-                data[path_field] = str(path)
+                content = self._decode_and_validate_artifact(key, encoded)
+                path = out_dir / f"{run_id}_{filename}"
+                decoded_outputs.append((path, content, path_field))
+
+        for path, content, path_field in decoded_outputs:
+            path.write_bytes(content)
+            data[path_field] = str(path)
 
         data["output_dir"] = str(out_dir)
         return data
+
+    @staticmethod
+    def _decode_and_validate_artifact(key: str, encoded: str) -> bytes:
+        try:
+            content = base64.b64decode(encoded, validate=True)
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f"Invalid base64 for LingBot-Map artifact '{key}'.") from exc
+        if not content:
+            raise ValueError(f"LingBot-Map artifact '{key}' is empty.")
+
+        if key == "preview_image":
+            try:
+                with Image.open(io.BytesIO(content)) as image:
+                    image.verify()
+            except Exception as exc:
+                raise ValueError("LingBot-Map preview_image is not a valid image.") from exc
+        elif key in {"trajectory_json", "metadata_json"}:
+            try:
+                json.loads(content.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise ValueError(f"LingBot-Map artifact '{key}' is not valid JSON.") from exc
+        elif key == "point_cloud" and not content.lstrip().startswith((b"ply\n", b"ply\r\n", b"# .PCD")):
+            raise ValueError("LingBot-Map point_cloud is not a valid PLY or PCD artifact.")
+        elif key == "video" and (len(content) < 12 or b"ftyp" not in content[4:12]):
+            raise ValueError("LingBot-Map video is not a valid MP4 artifact.")
+
+        return content

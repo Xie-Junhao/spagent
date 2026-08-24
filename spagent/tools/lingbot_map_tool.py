@@ -137,12 +137,29 @@ class LingBotMapTool(Tool):
 
             if result and result.get("success"):
                 point_cloud_path = result.get("point_cloud_path")
+                trajectory_path = result.get("trajectory_path")
+                points_count = result.get("points_count")
+                if not point_cloud_path or not Path(point_cloud_path).is_file():
+                    return ToolResult.fail(
+                        "LingBot-Map completed without a readable point cloud artifact.",
+                        category=RECONSTRUCTION_3D,
+                    )
+                if not trajectory_path or not Path(trajectory_path).is_file():
+                    return ToolResult.fail(
+                        "LingBot-Map completed without a readable camera trajectory artifact.",
+                        category=RECONSTRUCTION_3D,
+                    )
+                if isinstance(points_count, bool) or not isinstance(points_count, int) or points_count <= 0:
+                    return ToolResult.fail(
+                        "LingBot-Map completed without a positive points_count.",
+                        category=RECONSTRUCTION_3D,
+                    )
                 common = {
                     "result": result,
                     "output_dir": result.get("output_dir"),
                     "viewer_url": result.get("viewer_url"),
                     "preview_path": result.get("preview_path"),
-                    "trajectory_path": result.get("trajectory_path"),
+                    "trajectory_path": trajectory_path,
                     "point_cloud_path": point_cloud_path,
                     "video_path": result.get("video_path"),
                     "num_frames": result.get("num_frames"),
@@ -150,26 +167,21 @@ class LingBotMapTool(Tool):
                     "log_path": result.get("log_path"),
                     "command": result.get("command"),
                     "metadata_path": result.get("metadata_path"),
-                    "points_count": result.get("points_count"),
+                    "points_count": points_count,
                 }
                 description = (
                     f"LingBot-Map reconstructed {result.get('num_frames', 0)} frame(s) "
                     f"into {result.get('points_count', 0)} 3D point(s)."
                 )
-                if point_cloud_path:
-                    return ToolResult(
-                        success=True,
-                        payload=PointCloudPayload(
-                            ply_filename=point_cloud_path,
-                            points_count=result.get("points_count"),
-                        ),
-                        description=description,
-                        output_path=result.get("preview_path"),
-                        **common,
-                    )
-                return ToolResult.fail(
-                    "LingBot-Map completed without a point cloud artifact.",
-                    category=RECONSTRUCTION_3D,
+                return ToolResult(
+                    success=True,
+                    payload=PointCloudPayload(
+                        ply_filename=point_cloud_path,
+                        points_count=points_count,
+                    ),
+                    description=description,
+                    output_path=result.get("preview_path"),
+                    **common,
                 )
 
             error_msg = result.get("error", "Unknown error") if result else "No result returned"
