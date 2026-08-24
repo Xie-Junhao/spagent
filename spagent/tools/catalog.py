@@ -297,7 +297,7 @@ TOOL_CATALOG: List[ToolCatalogEntry] = [
         "wilddet3d",
         WildDet3DTool,
         "3d",
-        "wilddet3d_3d_detection_tool",
+        "wilddet3d_tool",
         {"server_url": DEFAULT_SERVER_URLS["wilddet3d"]},
         category="detection",
     ),

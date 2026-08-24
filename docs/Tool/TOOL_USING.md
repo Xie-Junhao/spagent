@@ -1463,6 +1463,8 @@ python test/test_tool.py --tool oneformer --image assets/dog.jpeg --seg_task pan
 - Open-vocabulary text-prompt 3D detection
 - Supports 2D box prompts and point prompts
 - Returns 2D boxes, 3D boxes, scores, class names, depth output, and visualization output
+- Each 3D box is `[center_xyz(3), dimensions(3), quaternion_wxyz(4)]`
+- `scores` is the official combined 2D/3D ranking score; `scores_2d` and `scores_3d` expose the component confidences
 
 **File Structure**:
 ```
@@ -1505,6 +1507,9 @@ result = tool.call(
 )
 print(result["boxes_3d"], result["scores"], result["output_path"])
 ```
+
+Use `boxes=[[x1, y1, x2, y2], ...]` for one or more pixel-coordinate box prompts,
+or `points=[[x, y, label], ...]` with labels `1` (foreground) and `0` (background).
 
 **Resources**:
 - [Official Repository](https://github.com/allenai/WildDet3D)

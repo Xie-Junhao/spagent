@@ -1275,6 +1275,8 @@ print(result["answer"])
 - 支持开放词汇文本提示3D检测
 - 支持2D框提示和点提示
 - 返回2D框、3D框、scores、类别名、深度输出和可视化输出
+- 每个3D框格式为 `[center_xyz(3), dimensions(3), quaternion_wxyz(4)]`
+- `scores` 是官方2D/3D组合排序分数；`scores_2d` 和 `scores_3d` 分别返回对应置信度
 
 **文件结构**:
 ```
@@ -1317,6 +1319,9 @@ result = tool.call(
 )
 print(result["boxes_3d"], result["scores"], result["output_path"])
 ```
+
+使用 `boxes=[[x1, y1, x2, y2], ...]` 传入一个或多个像素坐标框，或使用
+`points=[[x, y, label], ...]` 传入点提示，其中 `1` 表示前景，`0` 表示背景。
 
 **资源链接**:
 - [官方仓库](https://github.com/allenai/WildDet3D)
