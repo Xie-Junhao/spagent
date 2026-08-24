@@ -6,6 +6,8 @@ optional live-service smoke test against a running SAM3 server.
 """
 
 import os
+import base64
+import io
 import sys
 from pathlib import Path
 
@@ -119,6 +121,116 @@ def test_sam3_mock_video_segmentation(tmp_path):
         for record in result["masks"]
         for mask_path in record["mask_paths"]
     )
+
+
+def test_sam3_mock_jpeg_frame_directory(tmp_path):
+    pytest.importorskip("cv2")
+    frame_dir = tmp_path / "frames"
+    frame_dir.mkdir()
+    for index in range(3):
+        Image.new("RGB", (64, 48), color=(index * 40, 80, 120)).save(
+            frame_dir / f"{index:05d}.jpg"
+        )
+
+    result = SAM3Tool(use_mock=True).call(
+        image_path=str(frame_dir),
+        text_prompt="object",
+        task="auto",
+    )
+
+    assert result["success"] is True
+    assert result["task"] == "video"
+    assert result["frames"] == 3
+    assert Path(result["output_path"]).is_file()
+    assert len(result["masks"]) == 3
+
+
+def test_sam3_client_encodes_frame_directory_in_numeric_order(tmp_path):
+    pytest.importorskip("cv2")
+    from spagent.external_experts.SAM3.sam3_client import SAM3Client
+
+    frame_dir = tmp_path / "frames"
+    frame_dir.mkdir()
+    Image.new("RGB", (16, 12), color="red").save(frame_dir / "10.jpg")
+    Image.new("RGB", (16, 12), color="blue").save(frame_dir / "2.jpg")
+
+    encoded = SAM3Client._encode_frame_directory(frame_dir)
+    assert len(encoded) == 2
+    assert all(base64.b64decode(frame) for frame in encoded)
+
+
+def test_sam3_server_accepts_uploaded_jpeg_frames(monkeypatch):
+    pytest.importorskip("cv2")
+    from spagent.external_experts.SAM3 import sam3_server
+
+    observed = {}
+
+    class FakeVideoPredictor:
+        def handle_request(self, request):
+            if request["type"] == "start_session":
+                source = Path(request["resource_path"])
+                observed["source"] = str(source)
+                observed["frames"] = sorted(path.name for path in source.glob("*.jpg"))
+                return {"session_id": "test-session"}
+            if request["type"] == "add_prompt":
+                return {
+                    "frame_index": 0,
+                    "outputs": {"out_binary_masks": np.ones((1, 24, 32), dtype=bool)},
+                }
+            if request["type"] == "close_session":
+                return {"is_success": True}
+            raise AssertionError(request)
+
+        def handle_stream_request(self, request):
+            assert request["type"] == "propagate_in_video"
+            yield {
+                "frame_index": 1,
+                "outputs": {"out_binary_masks": np.ones((1, 24, 32), dtype=bool)},
+            }
+
+    monkeypatch.setattr(sam3_server, "video_predictor", FakeVideoPredictor())
+    encoded_frames = []
+    for color in ("red", "blue"):
+        buffer = io.BytesIO()
+        Image.new("RGB", (32, 24), color=color).save(buffer, format="JPEG")
+        encoded_frames.append(base64.b64encode(buffer.getvalue()).decode("ascii"))
+
+    response = sam3_server.app.test_client().post(
+        "/infer_video",
+        json={
+            "frames": encoded_frames,
+            "text_prompt": "object",
+            "frame_index": 0,
+            "score_threshold": 0.1,
+            "max_instances": 2,
+        },
+    )
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["success"] is True
+    assert payload["frames"] == 2
+    assert base64.b64decode(payload["video"])
+    assert observed["frames"] == ["000000.jpg", "000001.jpg"]
+    assert not Path(observed["source"]).exists()
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"score_threshold": 1.1}, "score_threshold"),
+        ({"max_instances": 0}, "max_instances"),
+        ({"task": "video", "frame_index": -1}, "frame_index"),
+    ],
+)
+def test_sam3_rejects_invalid_numeric_parameters(sample_image_path, kwargs, message):
+    result = SAM3Tool(use_mock=True).call(
+        image_path=sample_image_path,
+        text_prompt="object",
+        **kwargs,
+    )
+    assert result["success"] is False
+    assert message in result["error"]
 
 
 def test_sam3_server_extracts_official_video_mask_key():

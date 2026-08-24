@@ -87,21 +87,32 @@ class SAM3Client:
         save_overlay: bool = True,
     ) -> Optional[Dict]:
         try:
-            if not os.path.exists(video_path):
+            source = Path(video_path)
+            if not source.exists():
                 return {"success": False, "error": f"Video file not found: {video_path}"}
 
-            with open(video_path, "rb") as f:
-                video_b64 = base64.b64encode(f.read()).decode("utf-8")
-
             payload = {
-                "video": video_b64,
-                "filename": os.path.basename(video_path),
                 "text_prompt": text_prompt,
                 "frame_index": int(frame_index),
                 "score_threshold": float(score_threshold),
                 "max_instances": int(max_instances),
                 "save_overlay": bool(save_overlay),
             }
+            if source.is_dir():
+                frames = self._encode_frame_directory(source)
+                if not frames:
+                    return {
+                        "success": False,
+                        "error": f"No readable JPEG frames found in directory: {video_path}",
+                    }
+                payload.update({"frames": frames, "filename": source.name})
+            elif source.is_file():
+                with source.open("rb") as f:
+                    payload["video"] = base64.b64encode(f.read()).decode("utf-8")
+                payload["filename"] = source.name
+            else:
+                return {"success": False, "error": f"Unsupported video input: {video_path}"}
+
             response = requests.post(f"{self.server_url}/infer_video", json=payload, timeout=600)
             response.raise_for_status()
             result = response.json()
@@ -215,6 +226,37 @@ class SAM3Client:
         result["frame_mask_paths"] = flat_mask_paths
         result["mask_frames_dir"] = str(mask_dir)
         return result
+
+    @staticmethod
+    def _encode_frame_directory(frame_dir: Path) -> List[str]:
+        frame_paths = [
+            path for path in frame_dir.iterdir()
+            if path.is_file() and path.suffix.lower() in {".jpg", ".jpeg"}
+        ]
+        frame_paths.sort(key=SAM3Client._frame_sort_key)
+
+        encoded = []
+        expected_size = None
+        for frame_path in frame_paths:
+            frame = cv2.imread(str(frame_path))
+            if frame is None:
+                raise ValueError(f"Unable to read JPEG frame: {frame_path}")
+            size = frame.shape[:2]
+            if expected_size is None:
+                expected_size = size
+            elif size != expected_size:
+                raise ValueError("All JPEG frames must have the same dimensions.")
+            ok, buffer = cv2.imencode(".jpg", frame)
+            if not ok:
+                raise ValueError(f"Unable to encode JPEG frame: {frame_path}")
+            encoded.append(base64.b64encode(buffer.tobytes()).decode("utf-8"))
+        return encoded
+
+    @staticmethod
+    def _frame_sort_key(path: Path):
+        if path.stem.isdigit():
+            return 0, int(path.stem)
+        return 1, path.name.lower()
 
     def _decode_mask(self, mask_b64: Optional[str]) -> Optional[np.ndarray]:
         if not mask_b64:

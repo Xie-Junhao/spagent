@@ -75,6 +75,7 @@ class SAM3Tool(Tool):
                 },
                 "frame_index": {
                     "type": "integer",
+                    "minimum": 0,
                     "description": "Video frame index where the text prompt is added. Ignored for image inputs.",
                     "default": 0,
                 },
@@ -118,7 +119,19 @@ class SAM3Tool(Tool):
             if not path.exists():
                 return ToolResult.fail(f"Input file not found: {image_path}", category=SEGMENTATION)
 
+            if not 0.0 <= float(score_threshold) <= 1.0:
+                return ToolResult.fail("score_threshold must be between 0 and 1.", category=SEGMENTATION)
+            if int(max_instances) < 1:
+                return ToolResult.fail("max_instances must be at least 1.", category=SEGMENTATION)
+            if int(frame_index) < 0:
+                return ToolResult.fail("frame_index must be non-negative.", category=SEGMENTATION)
+
             resolved_task = self._resolve_task(path, task)
+            if resolved_task == "image" and path.is_dir():
+                return ToolResult.fail(
+                    "Image task requires an image file, not a directory.",
+                    category=SEGMENTATION,
+                )
             common_args = {
                 "text_prompt": text_prompt.strip(),
                 "score_threshold": float(score_threshold),

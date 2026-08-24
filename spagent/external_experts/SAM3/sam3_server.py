@@ -2,6 +2,7 @@ import argparse
 import base64
 import logging
 import os
+import shutil
 import tempfile
 import traceback
 from pathlib import Path
@@ -175,18 +176,32 @@ def infer_video():
     session_id = None
     try:
         data = request.get_json() or {}
-        if "video" not in data:
-            return jsonify({"success": False, "error": "Missing video data"}), 400
+        has_video = isinstance(data.get("video"), str) and bool(data.get("video"))
+        has_frames = isinstance(data.get("frames"), list) and bool(data.get("frames"))
+        if has_video == has_frames:
+            return jsonify(
+                {"success": False, "error": "Provide exactly one of video or non-empty frames"}
+            ), 400
         text_prompt = _require_prompt(data)
         if isinstance(text_prompt, tuple):
             return text_prompt
 
-        suffix = Path(data.get("filename") or "input.mp4").suffix or ".mp4"
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as f:
-            f.write(base64.b64decode(data["video"]))
-            temp_path = f.name
+        if has_frames:
+            temp_path = _materialize_frame_directory(data["frames"])
+        else:
+            suffix = Path(data.get("filename") or "input.mp4").suffix or ".mp4"
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as f:
+                f.write(base64.b64decode(data["video"], validate=True))
+                temp_path = f.name
 
         frame_index = int(data.get("frame_index", 0))
+        if frame_index < 0:
+            return jsonify({"success": False, "error": "frame_index must be non-negative"}), 400
+        frame_count = _input_frame_count(temp_path)
+        if frame_count and frame_index >= frame_count:
+            return jsonify(
+                {"success": False, "error": f"frame_index {frame_index} is outside {frame_count} frames"}
+            ), 400
         score_threshold = float(data.get("score_threshold", 0.5))
         start_response = video_predictor.handle_request(
             request={"type": "start_session", "resource_path": temp_path}
@@ -246,12 +261,18 @@ def infer_video():
                 )
             except Exception as e:
                 logger.warning("Failed to close SAM3 video session %s: %s", session_id, e)
-        for path in [temp_path, output_path]:
-            if path and os.path.exists(path):
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
+        if temp_path and os.path.isdir(temp_path):
+            shutil.rmtree(temp_path, ignore_errors=True)
+        elif temp_path and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+        if output_path and os.path.exists(output_path):
+            try:
+                os.remove(output_path)
+            except OSError:
+                pass
 
 
 def _require_prompt(data):
@@ -310,33 +331,96 @@ def _encode_mask(mask: np.ndarray) -> str:
     return base64.b64encode(buffer.tobytes()).decode("utf-8")
 
 
+def _materialize_frame_directory(encoded_frames: List[str]) -> str:
+    frame_dir = tempfile.mkdtemp(prefix="spagent_sam3_frames_")
+    try:
+        expected_size = None
+        for index, encoded in enumerate(encoded_frames):
+            if not isinstance(encoded, str) or not encoded:
+                raise ValueError(f"Invalid frame data at index {index}")
+            frame_bytes = base64.b64decode(encoded, validate=True)
+            frame = cv2.imdecode(np.frombuffer(frame_bytes, np.uint8), cv2.IMREAD_COLOR)
+            if frame is None:
+                raise ValueError(f"Invalid JPEG frame at index {index}")
+            size = frame.shape[:2]
+            if expected_size is None:
+                expected_size = size
+            elif size != expected_size:
+                raise ValueError("All JPEG frames must have the same dimensions")
+            frame_path = Path(frame_dir) / f"{index:06d}.jpg"
+            if not cv2.imwrite(str(frame_path), frame):
+                raise OSError(f"Unable to save temporary frame {index}")
+        return frame_dir
+    except Exception:
+        shutil.rmtree(frame_dir, ignore_errors=True)
+        raise
+
+
+def _input_frame_count(source_path: str) -> int:
+    source = Path(source_path)
+    if source.is_dir():
+        return len(list(source.glob("*.jpg")))
+    cap = cv2.VideoCapture(str(source))
+    if not cap.isOpened():
+        return 0
+    count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    cap.release()
+    return count
+
+
 def _render_video_overlay(
     video_path: str,
     outputs_per_frame: Dict,
     text_prompt: str,
     max_instances: int = 20,
 ):
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        raise ValueError(f"Unable to open temporary video: {video_path}")
-
-    fps = cap.get(cv2.CAP_PROP_FPS) or 5.0
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    source = Path(video_path)
+    cap = None
+    frame_paths = None
+    if source.is_dir():
+        frame_paths = sorted(source.glob("*.jpg"), key=lambda path: int(path.stem))
+        if not frame_paths:
+            raise ValueError(f"No JPEG frames found in temporary directory: {video_path}")
+        first_frame = cv2.imread(str(frame_paths[0]))
+        if first_frame is None:
+            raise ValueError(f"Unable to read temporary frame: {frame_paths[0]}")
+        height, width = first_frame.shape[:2]
+        fps = 5.0
+    else:
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            raise ValueError(f"Unable to open temporary video: {video_path}")
+        fps = cap.get(cv2.CAP_PROP_FPS) or 5.0
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     output = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
     output_path = output.name
     output.close()
     writer = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
     if not writer.isOpened():
-        cap.release()
+        if cap is not None:
+            cap.release()
         raise ValueError("Unable to create output video")
 
     frame_idx = 0
     frame_mask_records = []
     while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
+        if frame_paths is not None:
+            if frame_idx >= len(frame_paths):
+                break
+            frame = cv2.imread(str(frame_paths[frame_idx]))
+            if frame is None:
+                writer.release()
+                raise ValueError(f"Unable to read temporary frame: {frame_paths[frame_idx]}")
+        else:
+            ret, frame = cap.read()
+            if not ret:
+                break
+        if frame.shape[:2] != (height, width):
+            writer.release()
+            if cap is not None:
+                cap.release()
+            raise ValueError("All video frames must have the same dimensions")
         frame_outputs = outputs_per_frame.get(frame_idx, {})
         masks = _extract_video_masks(frame_outputs)[:max_instances]
         frame = _overlay_frame(frame, masks)
@@ -353,7 +437,8 @@ def _render_video_overlay(
         writer.write(frame)
         frame_idx += 1
 
-    cap.release()
+    if cap is not None:
+        cap.release()
     writer.release()
     return (
         output_path,
