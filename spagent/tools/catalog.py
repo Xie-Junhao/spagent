@@ -68,7 +68,6 @@ class ToolCatalogEntry:
 DEFAULT_SERVER_URLS: Dict[str, str] = {
     "depth": "http://127.0.0.1:20019",
     "segmentation": "http://127.0.0.1:20020",
-    "wilddet3d": "http://127.0.0.1:20027",
     "detection": "http://127.0.0.1:20022",
     "moondream": "http://127.0.0.1:20024",
     "molmo2": "http://127.0.0.1:20025",
