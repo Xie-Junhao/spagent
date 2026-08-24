@@ -57,7 +57,7 @@ external_experts/
 | **Orient Anything V2** | `OrientAnythingV2Tool` | 物体朝向与旋转估计 | 估计物体绝对朝向（方位角/仰角/旋转角/对称阶数）以及两视角间的相对位姿（NeurIPS 2025 Spotlight） | 本地服务器（20034） | `image_path`, `task`, `image_path2`(可选) |
 | **VACE** | `VaceTool` | 本地视频生成 | 基于单张参考图 + 文本提示词，通过本地 Wan2.1-VACE 首帧流水线生成短视频，返回 `.mp4` 路径 | 本地服务器（20034） | `image_path`, `prompt`, `base`(可选), `task`(可选), `mode`(可选) |
 | **PaddleOCR-VL-1.5** | `PaddleOCRVLTool` | 文档 OCR 与结构化识别 | 0.9B 视觉语言模型，支持纯文本 OCR、表格解析、图表读取、公式转 LaTeX、文本定位与印章识别；支持本地/服务器/mock 模式；无需额外 checkpoint 环境变量 | 本地或服务器（20037） | `image_path`, `task`（`"ocr"` / `"table"` / `"chart"` / `"formula"` / `"spotting"` / `"seal"`） |
-| **InfiniDepth** | `InfiniDepthTool` | 高分辨率深度估计 | 从单张 RGB 图像估计相对深度，可选导出点云 | 本地服务器（20039） | `image_path`, `task`, `save_pcd`, `upsample_ratio` |
+| **InfiniDepth** | `InfiniDepthTool` | 高分辨率深度估计 | 从单张 RGB 图像估计相对深度，可选导出点云 | 本地服务器（20039） | `image_path`, `task`, `save_pcd`, `output_resolution_mode`, `upsample_ratio` |
 
 **使用示例**:
 - 详细使用示例请参考：[Advanced Examples](../Examples/ADVANCED_EXAMPLES.md)
@@ -1272,6 +1272,7 @@ print(result["answer"])
 
 **特点**:
 - 支持单图相对深度估计
+- 默认输出原图分辨率，也可选择高分辨率上采样
 - 可选导出点云
 - 通过本地服务调用官方 InfiniDepth 推理脚本
 
@@ -1310,10 +1311,14 @@ tool = InfiniDepthTool(use_mock=False, server_url="http://127.0.0.1:20039")
 result = tool.call(
     image_path="assets/dog.jpeg",
     save_pcd=False,
+    output_resolution_mode="original",
     upsample_ratio=2,
 )
 print(result["depth_path"], result["colored_depth_path"])
 ```
+
+如需高分辨率结果，设置 `output_resolution_mode="upsample"`；返回的 `shape`
+始终对应实际深度结果尺寸，`source_shape` 对应输入图像尺寸。
 
 **资源链接**:
 - [官方仓库](https://github.com/zju3dv/InfiniDepth)

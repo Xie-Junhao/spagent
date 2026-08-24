@@ -65,7 +65,7 @@ external_experts/
 | **FlowSeek** | `FlowSeekTool` | Optical Flow Estimation | Estimate dense per-pixel motion between two images (consecutive frames or before/after pairs); returns colorized flow visualization; M variant (ViT-B) or T variant (ViT-S); source vendored in repo, requires `FLOWSEEK_CHECKPOINT` and `FLOWSEEK_DAV2_CHECKPOINT` env vars | Local / Server (port 20036) | `image1_path`, `image2_path`, `output_path`(optional) |
 | **PaddleOCR-VL-1.5** | `PaddleOCRVLTool` | Document OCR & Structured Recognition | 0.9B VLM for plain OCR, table parsing, chart reading, formula → LaTeX, text spotting, and seal recognition; supports local/server/mock; no checkpoint env var required | Local or Server (port 20037) | `image_path`, `task` ("ocr" / "table" / "chart" / "formula" / "spotting" / "seal") |
 | **OneFormer** | `OneFormerTool` | Universal Image Segmentation | Single model for semantic / instance / panoptic; HF auto-download; returns colorized overlay + mask_path id-map | Local / Server (port 20038) | `image_path`, `task` ("semantic" / "instance" / "panoptic") |
-| **InfiniDepth** | `InfiniDepthTool` | High-resolution Depth Estimation | Estimate relative depth from a single RGB image with optional point cloud export | Server (port 20039) | `image_path`, `task`, `save_pcd`, `upsample_ratio` |
+| **InfiniDepth** | `InfiniDepthTool` | High-resolution Depth Estimation | Estimate relative depth from a single RGB image with optional point cloud export | Server (port 20039) | `image_path`, `task`, `save_pcd`, `output_resolution_mode`, `upsample_ratio` |
 
 **Usage Examples**:
 - For detailed usage examples, please refer to: [Advanced Examples](../Examples/ADVANCED_EXAMPLES.md)
@@ -1557,6 +1557,7 @@ python test/test_tool.py --tool oneformer --image assets/dog.jpeg --seg_task pan
 
 **Features**:
 - Single-image relative depth estimation
+- Original-resolution output by default, with optional high-resolution upsampling
 - Optional point cloud export
 - Uses the official InfiniDepth inference script through a local server
 
@@ -1595,10 +1596,14 @@ tool = InfiniDepthTool(use_mock=False, server_url="http://127.0.0.1:20039")
 result = tool.call(
     image_path="assets/dog.jpeg",
     save_pcd=False,
+    output_resolution_mode="original",
     upsample_ratio=2,
 )
 print(result["depth_path"], result["colored_depth_path"])
 ```
+
+For a higher-resolution result, set `output_resolution_mode="upsample"`; the returned
+`shape` always describes the actual depth artifact and `source_shape` describes the input.
 
 **Resources**:
 - [Official Repository](https://github.com/zju3dv/InfiniDepth)
