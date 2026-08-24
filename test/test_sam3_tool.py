@@ -68,6 +68,18 @@ def test_sam3_mock_image_segmentation(sample_image_path):
     assert result["scores"]
 
 
+def test_sam3_mock_image_outputs_are_unique(sample_image_path):
+    tool = SAM3Tool(use_mock=True)
+
+    first = tool.call(image_path=sample_image_path, text_prompt="object")
+    second = tool.call(image_path=sample_image_path, text_prompt="object")
+
+    assert first["mask_path"] != second["mask_path"]
+    assert first["output_path"] != second["output_path"]
+    assert Path(first["mask_path"]).is_file()
+    assert Path(second["mask_path"]).is_file()
+
+
 def test_sam3_rejects_empty_prompt(sample_image_path):
     tool = SAM3Tool(use_mock=True)
 
@@ -145,6 +157,44 @@ def test_sam3_mock_jpeg_frame_directory(tmp_path):
     assert len(result["masks"]) == 3
 
 
+def test_sam3_mock_video_without_overlay_creates_only_masks(tmp_path):
+    pytest.importorskip("cv2")
+    from spagent.external_experts.SAM3.mock_sam3_service import MockSAM3Service
+
+    frame_dir = tmp_path / "frames"
+    frame_dir.mkdir()
+    for index in range(2):
+        Image.new("RGB", (32, 24), color=(index * 40, 80, 120)).save(frame_dir / f"{index}.jpg")
+    output_dir = tmp_path / "out"
+
+    result = MockSAM3Service(output_dir=str(output_dir)).infer_video(
+        video_path=str(frame_dir),
+        text_prompt="object",
+        save_overlay=False,
+    )
+
+    assert result["success"] is True
+    assert result["output_path"] is None
+    assert result["frame_mask_paths"]
+    assert list(output_dir.glob("*.mp4")) == []
+
+
+def test_sam3_mock_rejects_out_of_range_frame_index(tmp_path):
+    pytest.importorskip("cv2")
+    frame_dir = tmp_path / "frames"
+    frame_dir.mkdir()
+    Image.new("RGB", (32, 24), color="red").save(frame_dir / "0.jpg")
+
+    result = SAM3Tool(use_mock=True).call(
+        image_path=str(frame_dir),
+        text_prompt="object",
+        frame_index=1,
+    )
+
+    assert result["success"] is False
+    assert "outside 1 frames" in result["error"]
+
+
 def test_sam3_client_encodes_frame_directory_in_numeric_order(tmp_path):
     pytest.importorskip("cv2")
     from spagent.external_experts.SAM3.sam3_client import SAM3Client
@@ -157,6 +207,35 @@ def test_sam3_client_encodes_frame_directory_in_numeric_order(tmp_path):
     encoded = SAM3Client._encode_frame_directory(frame_dir)
     assert len(encoded) == 2
     assert all(base64.b64decode(frame) for frame in encoded)
+
+
+def test_sam3_client_rejects_invalid_mask(tmp_path):
+    pytest.importorskip("cv2")
+    from spagent.external_experts.SAM3.sam3_client import SAM3Client
+
+    source = np.zeros((12, 16, 3), dtype=np.uint8)
+    client = SAM3Client(output_dir=str(tmp_path / "out"))
+    with pytest.raises(ValueError, match="invalid PNG mask"):
+        client._save_image_outputs(
+            image_path="sample.jpg",
+            image=source,
+            result={"masks": [{"mask": base64.b64encode(b"not png").decode("ascii")}]},
+            save_overlay=True,
+        )
+
+
+@pytest.mark.parametrize("video", [None, base64.b64encode(b"not mp4").decode("ascii")])
+def test_sam3_client_rejects_missing_or_invalid_overlay_video(tmp_path, video):
+    pytest.importorskip("cv2")
+    from spagent.external_experts.SAM3.sam3_client import SAM3Client
+
+    client = SAM3Client(output_dir=str(tmp_path / "out"))
+    with pytest.raises(ValueError, match="overlay"):
+        client._save_video_outputs(
+            video_path="sample.mp4",
+            result={"success": True, "video": video, "frame_masks": []},
+            save_overlay=True,
+        )
 
 
 def test_sam3_server_accepts_uploaded_jpeg_frames(monkeypatch):
@@ -213,6 +292,23 @@ def test_sam3_server_accepts_uploaded_jpeg_frames(monkeypatch):
     assert base64.b64decode(payload["video"])
     assert observed["frames"] == ["000000.jpg", "000001.jpg"]
     assert not Path(observed["source"]).exists()
+
+    no_overlay_response = sam3_server.app.test_client().post(
+        "/infer_video",
+        json={
+            "frames": encoded_frames,
+            "text_prompt": "object",
+            "frame_index": 0,
+            "score_threshold": 0.1,
+            "max_instances": 2,
+            "save_overlay": False,
+        },
+    )
+    no_overlay_payload = no_overlay_response.get_json()
+    assert no_overlay_response.status_code == 200
+    assert no_overlay_payload["success"] is True
+    assert no_overlay_payload["video"] is None
+    assert no_overlay_payload["frame_masks"]
 
 
 @pytest.mark.parametrize(

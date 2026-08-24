@@ -2,7 +2,7 @@ import hashlib
 import logging
 import os
 import tempfile
-import time
+import uuid
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -33,7 +33,7 @@ class MockSAM3Service:
             width, height = image.size
             count = max(1, min(int(max_instances), 2))
             boxes = self._boxes_for_prompt(text_prompt, width, height, count)
-            timestamp = int(time.time())
+            run_id = uuid.uuid4().hex[:12]
             stem = Path(image_path).stem
 
             overlay = image.copy()
@@ -57,7 +57,7 @@ class MockSAM3Service:
                 overlay_draw.rectangle(box, fill=color + (90,), outline=color + (255,), width=3)
                 overlay_draw.text((box[0] + 4, box[1] + 4), f"{text_prompt}:{idx}", fill=color + (255,))
 
-                mask_path = os.path.join(self.output_dir, f"sam3_mock_mask_{stem}_{timestamp}_{idx}.png")
+                mask_path = os.path.join(self.output_dir, f"sam3_mock_mask_{stem}_{run_id}_{idx}.png")
                 mask.save(mask_path)
                 masks.append(
                     {
@@ -69,9 +69,9 @@ class MockSAM3Service:
                     }
                 )
 
-            overlay_path = os.path.join(self.output_dir, f"sam3_mock_overlay_{stem}_{timestamp}.png")
-            output_path = os.path.join(self.output_dir, f"sam3_mock_combined_{stem}_{timestamp}.png")
-            mask_path = os.path.join(self.output_dir, f"sam3_mock_mask_{stem}_{timestamp}.png")
+            overlay_path = os.path.join(self.output_dir, f"sam3_mock_overlay_{stem}_{run_id}.png")
+            output_path = os.path.join(self.output_dir, f"sam3_mock_combined_{stem}_{run_id}.png")
+            mask_path = os.path.join(self.output_dir, f"sam3_mock_mask_{stem}_{run_id}.png")
 
             if save_overlay:
                 overlay.save(overlay_path)
@@ -132,6 +132,7 @@ class MockSAM3Service:
                 return {"success": False, "error": f"Unable to read frame: {frame_paths[0]}"}
             height, width = first_frame.shape[:2]
             fps = 5.0
+            expected_frames = len(frame_paths)
         else:
             cap = cv2.VideoCapture(video_path)
             if not cap.isOpened():
@@ -139,19 +140,29 @@ class MockSAM3Service:
             fps = cap.get(cv2.CAP_PROP_FPS) or 5.0
             width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            expected_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if int(frame_index) < 0 or (expected_frames > 0 and int(frame_index) >= expected_frames):
+            if cap is not None:
+                cap.release()
+            return {
+                "success": False,
+                "error": f"frame_index {frame_index} is outside {expected_frames} frames",
+            }
         os.makedirs(self.output_dir, exist_ok=True)
-        timestamp = int(time.time())
+        run_id = uuid.uuid4().hex[:12]
         stem = Path(video_path).stem
-        output_path = os.path.join(self.output_dir, f"sam3_mock_video_{stem}_{timestamp}.mp4")
-        writer = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
-        if not writer.isOpened():
+        output_path = os.path.join(self.output_dir, f"sam3_mock_video_{stem}_{run_id}.mp4")
+        writer = None
+        if save_overlay:
+            writer = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
+        if writer is not None and not writer.isOpened():
             if cap is not None:
                 cap.release()
             return {"success": False, "error": "Unable to create output video writer."}
 
         boxes = self._boxes_for_prompt(text_prompt, width, height, max(1, min(int(max_instances), 2)))
         frame_count = 0
-        mask_dir = Path(self.output_dir) / f"sam3_mock_video_{stem}_{timestamp}_masks"
+        mask_dir = Path(self.output_dir) / f"sam3_mock_video_{stem}_{run_id}_masks"
         mask_dir.mkdir(parents=True, exist_ok=True)
         frame_masks = []
         while True:
@@ -160,12 +171,19 @@ class MockSAM3Service:
                     break
                 frame = cv2.imread(str(frame_paths[frame_count]))
                 if frame is None:
-                    writer.release()
+                    if writer is not None:
+                        writer.release()
                     return {"success": False, "error": f"Unable to read frame: {frame_paths[frame_count]}"}
             else:
                 ret, frame = cap.read()
                 if not ret:
                     break
+            if frame.shape[:2] != (height, width):
+                if cap is not None:
+                    cap.release()
+                if writer is not None:
+                    writer.release()
+                return {"success": False, "error": "All video frames must have the same dimensions."}
             overlay = frame.copy()
             mask_paths = []
             for idx, box in enumerate(boxes):
@@ -176,17 +194,24 @@ class MockSAM3Service:
                 mask = np.zeros((height, width), dtype=np.uint8)
                 cv2.rectangle(mask, (x1, y1), (x2, y2), 255, -1)
                 mask_path = mask_dir / f"frame_{frame_count:06d}_instance_{idx:03d}.png"
-                cv2.imwrite(str(mask_path), mask)
+                if not cv2.imwrite(str(mask_path), mask):
+                    if cap is not None:
+                        cap.release()
+                    if writer is not None:
+                        writer.release()
+                    return {"success": False, "error": f"Unable to save mask: {mask_path}"}
                 mask_paths.append(str(mask_path))
             frame = cv2.addWeighted(overlay, 0.35, frame, 0.65, 0)
             cv2.putText(frame, text_prompt, (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            writer.write(frame)
+            if writer is not None:
+                writer.write(frame)
             frame_masks.append({"frame_index": frame_count, "mask_paths": mask_paths})
             frame_count += 1
 
         if cap is not None:
             cap.release()
-        writer.release()
+        if writer is not None:
+            writer.release()
         return {
             "success": True,
             "task": "video",
@@ -215,8 +240,8 @@ class MockSAM3Service:
         boxes = []
         for idx in range(count):
             base = digest[idx]
-            box_w = max(16, width // (3 + idx))
-            box_h = max(16, height // (3 + idx))
+            box_w = min(width, max(1, max(16, width // (3 + idx))))
+            box_h = min(height, max(1, max(16, height // (3 + idx))))
             x1 = int((base / 255.0) * max(1, width - box_w))
             y1 = int((digest[-idx - 1] / 255.0) * max(1, height - box_h))
             boxes.append((x1, y1, x1 + box_w, y1 + box_h))

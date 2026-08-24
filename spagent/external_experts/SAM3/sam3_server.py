@@ -120,7 +120,7 @@ def infer():
         if isinstance(text_prompt, tuple):
             return text_prompt
 
-        image_bytes = base64.b64decode(data["image"])
+        image_bytes = base64.b64decode(data["image"], validate=True)
         image = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
         if image is None:
             return jsonify({"success": False, "error": "Invalid image data"}), 400
@@ -227,14 +227,18 @@ def infer_video():
             ):
                 outputs_per_frame[response["frame_index"]] = response.get("outputs", {})
 
+        save_overlay = bool(data.get("save_overlay", True))
         output_path, stats, frame_masks = _render_video_overlay(
             temp_path,
             outputs_per_frame,
             text_prompt,
             max_instances=max(1, int(data.get("max_instances", 20))),
+            save_overlay=save_overlay,
         )
-        with open(output_path, "rb") as f:
-            video_b64 = base64.b64encode(f.read()).decode("utf-8")
+        video_b64 = None
+        if output_path:
+            with open(output_path, "rb") as f:
+                video_b64 = base64.b64encode(f.read()).decode("utf-8")
 
         return jsonify(
             {
@@ -373,6 +377,7 @@ def _render_video_overlay(
     outputs_per_frame: Dict,
     text_prompt: str,
     max_instances: int = 20,
+    save_overlay: bool = True,
 ):
     source = Path(video_path)
     cap = None
@@ -393,14 +398,17 @@ def _render_video_overlay(
         fps = cap.get(cv2.CAP_PROP_FPS) or 5.0
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    output = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
-    output_path = output.name
-    output.close()
-    writer = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
-    if not writer.isOpened():
-        if cap is not None:
-            cap.release()
-        raise ValueError("Unable to create output video")
+    output_path = None
+    writer = None
+    if save_overlay:
+        output = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+        output_path = output.name
+        output.close()
+        writer = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
+        if not writer.isOpened():
+            if cap is not None:
+                cap.release()
+            raise ValueError("Unable to create output video")
 
     frame_idx = 0
     frame_mask_records = []
@@ -410,20 +418,23 @@ def _render_video_overlay(
                 break
             frame = cv2.imread(str(frame_paths[frame_idx]))
             if frame is None:
-                writer.release()
+                if writer is not None:
+                    writer.release()
                 raise ValueError(f"Unable to read temporary frame: {frame_paths[frame_idx]}")
         else:
             ret, frame = cap.read()
             if not ret:
                 break
         if frame.shape[:2] != (height, width):
-            writer.release()
+            if writer is not None:
+                writer.release()
             if cap is not None:
                 cap.release()
             raise ValueError("All video frames must have the same dimensions")
         frame_outputs = outputs_per_frame.get(frame_idx, {})
         masks = _extract_video_masks(frame_outputs)[:max_instances]
-        frame = _overlay_frame(frame, masks)
+        if save_overlay:
+            frame = _overlay_frame(frame, masks)
         frame_mask_records.append(
             {
                 "frame_index": frame_idx,
@@ -433,13 +444,15 @@ def _render_video_overlay(
                 ],
             }
         )
-        cv2.putText(frame, text_prompt, (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-        writer.write(frame)
+        if writer is not None:
+            cv2.putText(frame, text_prompt, (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            writer.write(frame)
         frame_idx += 1
 
     if cap is not None:
         cap.release()
-    writer.release()
+    if writer is not None:
+        writer.release()
     return (
         output_path,
         {"frames": frame_idx, "fps": fps, "size": [width, height]},
