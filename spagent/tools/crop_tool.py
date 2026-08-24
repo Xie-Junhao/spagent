@@ -5,13 +5,14 @@ Local image cropping utility for box, multi-box, mask, and polygon crops.
 """
 
 import logging
+import math
 import sys
 import uuid
 from pathlib import Path
 from tempfile import gettempdir
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw
 
 sys.path.append(str(Path(__file__).parent.parent))
 
@@ -57,6 +58,7 @@ class CropTool(Tool):
                         "minItems": 4,
                         "maxItems": 4,
                     },
+                    "minItems": 1,
                 },
                 "mask_path": {"type": "string", "description": "Optional binary mask image path for mask crop."},
                 "polygon": {
@@ -68,11 +70,13 @@ class CropTool(Tool):
                         "minItems": 2,
                         "maxItems": 2,
                     },
+                    "minItems": 3,
                 },
                 "padding": {
                     "type": "number",
                     "description": "Padding around the crop region. Pixel value by default; relative value when relative_coords=True.",
                     "default": 0,
+                    "minimum": 0,
                 },
                 "relative_coords": {
                     "type": "boolean",
@@ -182,6 +186,8 @@ class CropTool(Tool):
         output_dir: Path,
     ) -> List[Dict[str, Any]]:
         crops = []
+        if not boxes:
+            raise ValueError("boxes must contain at least one crop box.")
         run_id = uuid.uuid4().hex[:8]
         for idx, raw_box in enumerate(boxes):
             crop_box = _normalize_box(raw_box, image.size, padding, relative)
@@ -204,15 +210,15 @@ class CropTool(Tool):
         if not mask_file.exists():
             raise ValueError(f"Mask file not found: {mask_path}")
         with Image.open(mask_file) as mask_image:
-            mask = mask_image.convert("L").resize(image.size)
+            mask = mask_image.convert("L").resize(image.size, Image.Resampling.NEAREST)
         bbox = mask.getbbox()
         if bbox is None:
             raise ValueError("Mask is empty.")
         crop_box = _apply_padding(bbox, image.size, padding, relative)
         cropped = image.crop(crop_box)
         cropped_mask = mask.crop(crop_box)
-        cropped.putalpha(cropped_mask)
-        output_path = output_dir / f"{stem}_mask_crop.png"
+        cropped.putalpha(ImageChops.multiply(cropped.getchannel("A"), cropped_mask))
+        output_path = output_dir / f"{stem}_mask_crop_{uuid.uuid4().hex[:8]}.png"
         cropped.save(output_path)
         return _record(output_path, crop_box, cropped.size)
 
@@ -237,8 +243,8 @@ class CropTool(Tool):
         crop_box = _apply_padding(bbox, image.size, padding, relative)
         cropped = image.crop(crop_box)
         cropped_mask = mask.crop(crop_box)
-        cropped.putalpha(cropped_mask)
-        output_path = output_dir / f"{stem}_polygon_crop.png"
+        cropped.putalpha(ImageChops.multiply(cropped.getchannel("A"), cropped_mask))
+        output_path = output_dir / f"{stem}_polygon_crop_{uuid.uuid4().hex[:8]}.png"
         cropped.save(output_path)
         return _record(output_path, crop_box, cropped.size)
 
@@ -248,6 +254,8 @@ def _normalize_box(box: Sequence[float], size: Tuple[int, int], padding: float, 
         raise ValueError("box must have four values: [x1, y1, x2, y2].")
     width, height = size
     x1, y1, x2, y2 = [float(value) for value in box]
+    if not all(math.isfinite(value) for value in (x1, y1, x2, y2)):
+        raise ValueError("box values must be finite numbers.")
     if relative:
         x1, x2 = x1 * width, x2 * width
         y1, y2 = y1 * height, y2 * height
@@ -263,6 +271,8 @@ def _normalize_polygon(points: List[List[float]], size: Tuple[int, int], relativ
         if not isinstance(point, (list, tuple)) or len(point) != 2:
             raise ValueError("Each polygon point must be [x, y].")
         x, y = float(point[0]), float(point[1])
+        if not math.isfinite(x) or not math.isfinite(y):
+            raise ValueError("Polygon coordinates must be finite numbers.")
         if relative:
             x, y = x * width, y * height
         normalized.append((x, y))
@@ -272,8 +282,11 @@ def _normalize_polygon(points: List[List[float]], size: Tuple[int, int], relativ
 def _apply_padding(box, size: Tuple[int, int], padding: float, relative: bool) -> Tuple[int, int, int, int]:
     width, height = size
     x1, y1, x2, y2 = [float(value) for value in box]
-    pad_x = float(padding) * width if relative else float(padding)
-    pad_y = float(padding) * height if relative else float(padding)
+    padding = float(padding)
+    if not math.isfinite(padding) or padding < 0:
+        raise ValueError("padding must be a finite, non-negative number.")
+    pad_x = padding * width if relative else padding
+    pad_y = padding * height if relative else padding
     x1 = max(0, int(round(x1 - pad_x)))
     y1 = max(0, int(round(y1 - pad_y)))
     x2 = min(width, int(round(x2 + pad_x)))
