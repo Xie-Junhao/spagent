@@ -33,6 +33,7 @@
 | **[Quick Eval](docs/Evaluation/QUICK_EVAL.md)** | `quick_eval.py` reference and shell-script shortcuts |
 | **[Dataset Preparation](docs/Evaluation/EVALUATION.md)** | Per-benchmark dataset download and JSONL conversion |
 | **[Adding New Tools](docs/ADDING_NEW_TOOLS.md)** | Guide for extending SPAgent with new expert tools |
+| **[Contributing Tools](docs/Tool/CONTRIBUTING_TOOLS.md)** | Tool contract checklist and CI commands for contributors |
 
 ## ✅ Features
 

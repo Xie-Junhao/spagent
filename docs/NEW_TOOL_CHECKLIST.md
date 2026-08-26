@@ -107,7 +107,12 @@ class MyToolClient:
 
 ### `spagent/tools/<toolname>_tool.py`
 
+The example below uses the detection category. Choose the matching typed payload
+from the [Tool Output Contract](Tool/TOOL_CONFIGURATIONS.md).
+
 ```python
+from spagent.core.tool_result import DetectionPayload, ToolResult
+
 class MyTool(Tool):
     def __init__(self, checkpoint=None, device="cuda", server_url=None, use_mock=False):
         super().__init__(name="mytool", description="...")
@@ -127,16 +132,37 @@ class MyTool(Tool):
             from external_experts.MyTool.mytool_local import MyToolLocalClient
             self._client = MyToolLocalClient(**self._client_kwargs)
 
-    def call(self, image_path, ...) -> Dict:
+    def call(self, image_path, ...) -> ToolResult:
         ...
         raw = self._client.run(image_path=image_path, ...)
-        if raw.get("success"):
-            raw["result"] = {...}  # required by ADDING_NEW_TOOLS.md
-        return raw
+        if not raw.get("success"):
+            return ToolResult.fail(
+                raw.get("error", "Tool failed"),
+                category="detection",
+            )
+        payload = DetectionPayload(
+            boxes=raw["boxes"],
+            labels=raw["labels"],
+            box_format=raw.get("box_format", "xyxy_pixel"),
+            confidence=raw.get("confidence"),
+        )
+        return ToolResult(
+            success=True,
+            payload=payload,
+            description=raw.get("description", ""),
+            output_path=raw.get("output_path"),
+        )
 
 class _MockMyToolClient:
     def run(self, image_path, **kwargs) -> Dict:
-        return {"success": True, "result": {...}, "output_path": image_path, "description": "[mock] ..."}
+        return {
+            "success": True,
+            "boxes": [],
+            "labels": [],
+            "box_format": "xyxy_pixel",
+            "output_path": image_path,
+            "description": "[mock] No detections.",
+        }
 ```
 
 ---
@@ -212,7 +238,8 @@ git push origin feat/<toolname>
 
 - [ ] `torch.load(..., weights_only=False)` if checkpoint uses non-tensor globals (PyTorch ≥ 2.6)
 - [ ] Custom CUDA ops: add `_OP_AVAILABLE` flag and fall back to pure-PyTorch path
-- [ ] `result` field present in `call()` return dict (required by `ADDING_NEW_TOOLS.md`)
+- [ ] `call()` returns `ToolResult` with the category's typed payload
+- [ ] Failure paths return `ToolResult.fail(...)` without raising
 - [ ] Mock client returns same keys as real client
 - [ ] Server path setup uses `Path(__file__).resolve().parents[N]` so it works from any directory
 - [ ] No binary files committed (`.zip`, `.pt`, `.pth`, model weights)

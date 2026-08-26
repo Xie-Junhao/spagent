@@ -22,6 +22,7 @@ This tutorial explains how to create and integrate new tools into the SPAgent sy
 SPAgent tools follow a simple interface:
 
 - **Tool base class** (`spagent.core.tool.Tool`): Abstract base with `name`, `description`, `parameters`, and `call()`
+- **Output contract** (`spagent.core.tool_result`): `ToolResult` envelope with a category-specific typed payload
 - **ToolRegistry**: Manages available tools; the agent uses it to look up and execute tools by name
 - **Tool call format**: The model emits `<tool_call>{"name": "...", "arguments": {...}}</tool_call>` in its response; SPAgent parses these and executes the corresponding tools
 
@@ -54,7 +55,7 @@ The `Tool` base class requires:
 | `name` | str | Unique tool identifier (used in `<tool_call>`) |
 | `description` | str | Human-readable description for the model |
 | `parameters` | property → dict | JSON Schema for parameters (OpenAI function format) |
-| `call(**kwargs)` | method | Execute the tool and return a result dict |
+| `call(**kwargs)` | method | Execute the tool and return a `ToolResult` |
 
 ---
 
@@ -78,7 +79,8 @@ from typing import Dict, Any
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from core.tool import Tool
+from spagent.core.tool import Tool
+from spagent.core.tool_result import DetectionPayload, ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -126,27 +128,35 @@ class MyCustomTool(Tool):
         self,
         image_path: str,
         option: str = "mode_a"
-    ) -> Dict[str, Any]:
+    ) -> ToolResult:
         try:
             if not Path(image_path).exists():
-                return {"success": False, "error": f"Image not found: {image_path}"}
+                return ToolResult.fail(
+                    f"Image not found: {image_path}",
+                    category="detection",
+                )
 
             result = self._client.process(image_path, option=option)
 
             if result and result.get("success"):
-                return {
-                    "success": True,
-                    "result": result,
-                    "output_path": result.get("output_path"),
-                }
-            else:
-                return {
-                    "success": False,
-                    "error": result.get("error", "Unknown error") if result else "No result"
-                }
+                payload = DetectionPayload(
+                    boxes=result["boxes"],
+                    labels=result["labels"],
+                    box_format=result.get("box_format", "xyxy_pixel"),
+                    confidence=result.get("confidence"),
+                )
+                return ToolResult(
+                    success=True,
+                    payload=payload,
+                    description=result.get("description", ""),
+                    output_path=result.get("output_path"),
+                )
+
+            error = result.get("error", "Unknown error") if result else "No result"
+            return ToolResult.fail(error, category="detection")
         except Exception as e:
             logger.error(f"MyCustomTool error: {e}")
-            return {"success": False, "error": str(e)}
+            return ToolResult.fail(str(e), category="detection")
 ```
 
 ### Step 2: Export the tool in `spagent/tools/__init__.py`
@@ -199,32 +209,27 @@ The model uses these schemas to decide when and how to call your tool, so keep d
 
 ## Return Format
 
-`call()` must return a dictionary with at least:
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `success` | bool | Yes | Whether the call succeeded |
-| `result` | Any | Recommended | Main output (nested dict, paths, etc.) |
-| `error` | str | If `success=False` | Error message |
-
-Example success:
+`call()` must return a `ToolResult`. Successful results include a typed payload
+for one of the supported categories; failures use `ToolResult.fail(...)`.
+See the normative [Tool Output Contract](Tool/TOOL_CONFIGURATIONS.md) for
+required payload carriers by category.
 
 ```python
-return {
-    "success": True,
-    "result": {...},
-    "output_path": "/path/to/output.png",
-    "summary": "Brief summary for the model"
-}
-```
+payload = DetectionPayload(
+    boxes=boxes,
+    labels=labels,
+    box_format="xyxy_pixel",
+    confidence=scores,
+)
+return ToolResult(
+    success=True,
+    payload=payload,
+    description="Detected objects.",
+    output_path="/path/to/annotated.png",
+)
 
-Example failure:
-
-```python
-return {
-    "success": False,
-    "error": "Image file not found: /path/to/image.jpg"
-}
+# Failure:
+return ToolResult.fail("Image file not found", category="detection")
 ```
 
 ---
@@ -344,77 +349,16 @@ def _init_client(self):
 
 ## Complete Example
 
-A minimal, self-contained tool (no external server):
-
-```python
-# spagent/tools/example_simple_tool.py
-
-import sys
-from pathlib import Path
-from typing import Dict, Any
-
-sys.path.append(str(Path(__file__).parent.parent))
-from core.tool import Tool
-
-
-class ExampleSimpleTool(Tool):
-    """A minimal tool that counts pixels in an image (placeholder logic)."""
-
-    def __init__(self):
-        super().__init__(
-            name="example_simple_tool",
-            description="Count the approximate number of pixels in an image. Use for quick image size checks."
-        )
-
-    @property
-    def parameters(self) -> Dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "image_path": {
-                    "type": "string",
-                    "description": "Path to the image file."
-                }
-            },
-            "required": ["image_path"]
-        }
-
-    def call(self, image_path: str) -> Dict[str, Any]:
-        try:
-            p = Path(image_path)
-            if not p.exists():
-                return {"success": False, "error": f"File not found: {image_path}"}
-
-            # Placeholder: in practice you would load the image and compute something
-            import cv2
-            img = cv2.imread(str(p))
-            h, w = img.shape[:2]
-            pixel_count = h * w
-
-            return {
-                "success": True,
-                "result": {"width": w, "height": h, "pixel_count": pixel_count},
-                "summary": f"Image has {pixel_count} pixels ({w}x{h})"
-            }
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-```
-
-Usage:
-
-```python
-from spagent import SPAgent
-from spagent.models import GPTModel
-from spagent.tools.example_simple_tool import ExampleSimpleTool
-
-agent = SPAgent(model=GPTModel("gpt-4o-mini"), tools=[ExampleSimpleTool()])
-result = agent.solve_problem("image.png", "How many pixels does this image have?")
-```
+See the minimal `ToolResult` example and required CI commands in
+[Contributing Tools](Tool/CONTRIBUTING_TOOLS.md). For a complete implementation,
+use `spagent/tools/face_detection_tool.py` as the lightweight reference tool.
 
 ---
 
 ## Related Documentation
 
+- [Contributing Tools](Tool/CONTRIBUTING_TOOLS.md) – Minimal contract example, checklist, and CI commands
+- [Tool Output Contract](Tool/TOOL_CONFIGURATIONS.md) – Detailed envelope, payload, and rendering specification
 - [Tool Usage Guide](Tool/TOOL_USING.md) – Overview of built-in tools and how to run their servers
 - [Advanced Examples](Examples/ADVANCED_EXAMPLES.md) – More usage patterns
 - [Tool Definition Examples](../../spagent/tool_definition_examples.py) – Additional custom tool examples

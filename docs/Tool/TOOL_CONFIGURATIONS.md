@@ -1,4 +1,10 @@
-# SPAgent Tool Prompt & Input Configuration Analysis
+# SPAgent Tool Interface & Output Contract — Detailed Specification
+
+This is the normative reference for tool inputs, the `ToolResult` envelope,
+category-specific payloads, and rendering. Contributors should start with the
+short [Contributing Tools](CONTRIBUTING_TOOLS.md) guide and use this document
+only when choosing payload fields or advanced render configuration.
+
 ## Overview
 The SPAgent system uses a **three-layer prompt architecture**:
 1. **Role Prompt** (user-replaceable) - Defined at agent level in `spagent/core/prompts.py`
@@ -59,18 +65,20 @@ This section defines the **minimal output contract** per tool category. The goal
 |----------|-------|
 | Agent loop (`spagent/core/spagent.py:326-402`) | `success`; `description` (→ text shown to the VLM); a visualization among `output_path` / `vis_path` / `crop_paths` (`.mp4` in `output_path` is auto-frame-extracted) |
 | Memory (`spagent/core/memory.py:229-243`) | `success`, `error`, `description` |
-| Tests (`test/test_tool.py`) | lenient (payload **or** a vis path) — the required-raw contract below is the bar the tests tighten toward |
+| Tool CI (`test/tool_ci_report.py`) | `ToolResult`, category payload contract, rendering, box sanity, and failure behavior |
 
-The loop consumes the envelope + a rendering; the **raw payload is required for downstream analysis, chaining, and reproducible large-scale experiments**, even where the current tests don't yet assert it.
+The loop consumes the envelope + a rendering; the **raw payload is required for
+downstream analysis, chaining, reproducible experiments, and the tool CI
+contract gate**.
 
 ### Universal Result Envelope (required for EVERY tool)
 
 | Field | Type | When required | Purpose |
 |-------|------|---------------|---------|
 | `success` | bool | always | gates all downstream handling |
-| `description` | str | always (may be empty) | tool's *draft* natural-language summary. **Ownership:** the tool emits a draft; once the render module exists, the **renderer owns the final VLM-facing text** (default projection = pass the tool draft through; richer projections synthesize from the raw payload). |
+| `description` | str | always (may be empty) | Tool-authored draft summary; the renderer owns the final VLM-facing text. |
 | `error` | str | when `success=False` | failure reason (logged + surfaced to the model) |
-| **a rendered visualization** — one of `output_path` \| `vis_path` \| `crop_paths` \| `overlay_path` | str / list | any tool that produces an image/video | how the result reaches the VLM; a *view* of the raw payload (`.mp4` allowed in `output_path`). ⚠️ Today's agent loop consumes only `output_path`/`vis_path`/`crop_paths` — **the render module must also consume `overlay_path`** (a tool returning only `overlay_path` is contract-compliant). |
+| **a rendered visualization** — one of `output_path` \| `vis_path` \| `crop_paths` \| `overlay_path` | str / list | any tool that produces an image/video | How the result reaches the VLM; a view of the raw payload (`.mp4` is allowed in `output_path`). |
 
 ### Category Output Registry
 

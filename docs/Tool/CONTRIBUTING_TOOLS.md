@@ -1,17 +1,15 @@
 # Contributing a new tool — what the auto-tests expect
 
-Every tool must follow the standardized `ToolResult` contract
-(`docs/Tool/TOOL_CONFIGURATIONS.md`; introduced in PR #230). Two automated
-lanes check contributions, modeled on skillsbench's contribution CI: a
-**no-compute gate** that runs on every PR, and an opt-in **with-compute
-smoke** against live backends.
+Every tool must follow the standardized `ToolResult` contract. See
+[Tool Output Contract](TOOL_CONFIGURATIONS.md) for the detailed envelope,
+category payload, and rendering specification. This guide only covers the
+minimum contribution steps and automated checks.
 
 ## Checklist for a new tool
 
 1. Implement the tool in `spagent/tools/<name>_tool.py`, returning a
-   `ToolResult` with a typed payload (success path) or a plain
-   `{"success": False, "error": ...}` dict (failure path — never raise on
-   bad input; validate image paths even in mock mode).
+   `ToolResult` with a typed payload on success and `ToolResult.fail(...)`
+   on failure. Never raise on bad input; validate image paths in mock mode too.
 2. Register it in `spagent/tools/catalog.py` (`TOOL_CATALOG`, and
    `DEFAULT_SERVER_URLS` if server-backed). Unregistered tool files fail CI.
 3. Provide a mock client so the tool runs with `use_mock=True` and zero
@@ -24,6 +22,30 @@ smoke** against live backends.
    port table if the tool is server-backed). Lane 1's `docs` check fails
    undocumented tools.
 6. Run the lanes locally before opening the PR (below).
+
+Minimal detection example:
+
+```python
+from spagent.core.tool_result import DetectionPayload, ToolResult
+
+payload = DetectionPayload(
+    boxes=boxes,
+    labels=labels,
+    box_format="xyxy_pixel",
+    confidence=scores,
+    image_width=width,
+    image_height=height,
+)
+return ToolResult(
+    success=True,
+    payload=payload,
+    description=f"Detected {len(boxes)} objects.",
+    output_path=annotated_path,
+)
+
+# Failure path:
+return ToolResult.fail("Image not found", category="detection")
+```
 
 ## Lane 1 — no-compute contract gate (`tool-ci.yml`, every PR)
 

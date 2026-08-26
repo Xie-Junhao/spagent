@@ -60,6 +60,7 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--max-iterations",
         type=int,
         default=2,
         help="Maximum tool-call iterations",
