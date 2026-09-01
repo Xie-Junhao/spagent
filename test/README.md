@@ -11,6 +11,7 @@ Unit tests and integration smoke tests for SPAgent.
 | `test_tool.py` | Directly invoke external expert tools (Pi3, Pi3X, SAM2, GroundingDINO, etc.) without going through the LLM agent |
 | `test_pi3_llm.py` | End-to-end agent test: video → frame extraction → Pi3 tool → LLM answer |
 | `test_prompt.py` | Verify system prompt construction for all configurations (3D spatial / general vision / custom) |
+| `test_qwen_image_edit_tool.py` | Qwen Image Edit schema, mock editing, multi-image rendering, validation, and DashScope protocol tests |
 
 ---
 
@@ -39,6 +40,9 @@ python test/test_tool.py --tool grounding_dino --image assets/dog.jpeg --text_pr
 
 # Test SAM2 tool directly
 python test/test_tool.py --tool sam --image assets/dog.jpeg
+
+# Test Qwen Image Edit without an API key
+pytest -q test/test_qwen_image_edit_tool.py
 ```
 
 ---

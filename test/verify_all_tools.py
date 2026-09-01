@@ -37,6 +37,7 @@ CALL_KW = {
     "sora":         dict(prompt="a dog running"),
     "wan":          dict(prompt="a dog running"),
     "vace":         dict(image_path=IMG, prompt="dog walks"),
+    "qwen_image_edit": dict(image_path=IMG, prompt="add a blue collar"),
     "flowseek":     dict(image1_path=IMG, image2_path=IMG,
                          output_path="outputs/vflow.png"),
     "paddleocr_vl": dict(image_path=IMG),

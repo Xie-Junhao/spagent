@@ -318,6 +318,12 @@ _GV_TOOL_ENTRIES: Dict[str, str] = {
         "  • ⚠ NEVER call pi3 with azimuth=0, elevation=0 — it repeats the input view!\n"
         "  • Best angles: elevation=45 (top-down), azimuth=±90 (sides), azimuth=180 (back)"
     ),
+    "qwen_image_edit_tool": (
+        "qwen_image_edit_tool — for transforming an existing image on request:\n"
+        "  • Add, remove, replace, restyle, relight, edit text, or fuse reference images\n"
+        "  • Describe both the requested change and what must remain unchanged\n"
+        "  • Treat the result as generated media, not evidence about the source image"
+    ),
 }
 
 _GV_DETECTION_FALLBACK = (
@@ -530,6 +536,11 @@ _TSG_CATEGORIES: List[Dict[str, Any]] = [
             "image_generation_sana_tool": (
                 "- **image_generation_sana_tool**: Use to visualize hypothetical scenes or "
                 "planned outcomes from text. Output is synthetic, not factual evidence."
+            ),
+            "qwen_image_edit_tool": (
+                "- **qwen_image_edit_tool**: Use to transform a supplied image from a natural-"
+                "language instruction or fuse up to three images. State what to change and "
+                "what to preserve. Output is generated media, not factual evidence."
             ),
             "video_generation_veo_tool": (
                 "- **video_generation_veo_tool** / **video_generation_sora_tool** / "

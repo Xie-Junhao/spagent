@@ -27,6 +27,9 @@ on:
 jobs:
   real-smoke:
     runs-on: [self-hosted, gpu]
+    env:
+      DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+      DASHSCOPE_BASE_URL: ${{ secrets.DASHSCOPE_BASE_URL }}
     steps:
       - uses: actions/checkout@v4
       - name: Real-backend smoke

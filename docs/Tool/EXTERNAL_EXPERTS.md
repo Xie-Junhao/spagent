@@ -29,6 +29,7 @@ Full list of supported external expert models in SPAgent, their default ports, a
 | **FlowSeek** | 2D | Optical Flow Estimation | Local / server (20036) | Dense per-pixel motion between two images; M (ViT-B) or T (ViT-S) variants |
 | **PaddleOCR-VL-1.5** | OCR | Document OCR & Structured Recognition | Local or server (20037) | Plain OCR, table, chart, formula→LaTeX, seal recognition; auto-downloads from HuggingFace |
 | **OneFormer** | 2D | Universal Image Segmentation | Local / server (20038) | semantic / instance / panoptic; HF auto-download; returns mask_path |
+| **Qwen Image Edit** | Image | Instruction-based Image Editing & Fusion | API (no server) | Qwen Image through DashScope; requires `DASHSCOPE_API_KEY`; supports 1-3 input images and 1-6 outputs |
 
 ## Port Summary
 

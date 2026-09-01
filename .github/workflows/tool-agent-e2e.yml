@@ -5,7 +5,7 @@ name: tool-agent-e2e
 # with the backends already running on the runner host.
 #
 # API keys come from repository secrets (GEMINI_API_KEY / OPENAI_API_KEY /
-# ANTHROPIC_API_KEY) and are exposed to the script as environment variables
+# ANTHROPIC_API_KEY / DASHSCOPE_API_KEY) and are exposed to the script as environment variables
 # only — never as CLI arguments and never echoed into logs or reports.
 #
 # No self-hosted runner? Run the same check locally:
@@ -44,6 +44,8 @@ jobs:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+      DASHSCOPE_BASE_URL: ${{ secrets.DASHSCOPE_BASE_URL }}
       LOCAL_BASE_URL: ${{ inputs.local_base_url }}
     steps:
       - uses: actions/checkout@v4

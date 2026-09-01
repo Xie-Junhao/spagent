@@ -43,6 +43,7 @@ IMG = "assets/dog.jpeg"
 CALL_KW = {
     "depth":        dict(image_path=IMG),
     "segmentation": dict(image_path=IMG),
+    "oneformer":    dict(image_path=IMG),
     "detection":    dict(image_path=IMG, text_prompt="dog"),
     "zoom":         dict(image_path=IMG, text_prompt="dog"),
     "localize":     dict(image_path=IMG, text_prompt="dog"),
@@ -59,6 +60,7 @@ CALL_KW = {
     "mapanything":  dict(image_path=[IMG], azimuth_angle=30, elevation_angle=10),
     "orient_anything_v2": dict(image_path=IMG, object_category="dog"),
     "sana":         dict(prompt="a dog"),
+    "qwen_image_edit": dict(image_path=IMG, prompt="make the dog wear sunglasses"),
     "veo":          dict(prompt="a dog running"),
     "sora":         dict(prompt="a dog running"),
     "wan":          dict(prompt="a dog running"),

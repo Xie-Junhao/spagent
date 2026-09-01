@@ -761,6 +761,7 @@ class SPAgent:
 
         generation_tools = {
             "image_generation_sana_tool",
+            "qwen_image_edit_tool",
             "video_generation_veo_tool",
             "video_generation_sora_tool",
             "video_generation_wan_tool",
@@ -775,6 +776,11 @@ class SPAgent:
         generation_keywords = [
             "generate", "create", "visualize", "imagine", "render", "synthesize",
             "draw", "make an image", "make a video", "produce an image", "produce a video",
+            "edit image", "edit the image", "edit this image", "modify image",
+            "modify the image", "change the image", "replace the background",
+            "change the background", "add an object to the image",
+            "remove an object from the image", "restyle the image",
+            "编辑图片", "编辑图像", "修改图片", "修改图像", "替换背景", "更换背景",
         ]
         spatial_keywords = [
             "3d", "viewpoint", "azimuth", "elevation", "camera", "orientation",
