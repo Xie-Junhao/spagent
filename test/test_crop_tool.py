@@ -26,6 +26,14 @@ def test_crop_tool_is_exported():
     assert CropTool is not None
 
 
+def test_crop_is_in_tool_selection_guide():
+    from core.prompts import build_tool_selection_guide
+
+    guide = build_tool_selection_guide({"crop_tool"})
+    assert "## 2D Perception" in guide
+    assert "crop_tool" in guide
+
+
 def test_crop_schema_contains_inputs():
     tool = CropTool()
     params = tool.parameters
