@@ -31,6 +31,14 @@ def test_infinidepth_tool_is_exported():
     assert InfiniDepthTool is not None
 
 
+def test_infinidepth_is_in_tool_selection_guide():
+    from core.prompts import build_tool_selection_guide
+
+    guide = build_tool_selection_guide({"infinidepth_tool"})
+    assert "## 2D Perception" in guide
+    assert "infinidepth_tool" in guide
+
+
 def test_infinidepth_schema_contains_inputs():
     tool = InfiniDepthTool(use_mock=True)
     params = tool.parameters
