@@ -218,7 +218,7 @@ def test_wilddet3d_server_maps_class_ids_to_detection_labels():
 
 
 def test_wilddet3d_server_aggregates_multiple_box_prompts(monkeypatch):
-    import torch
+    torch = pytest.importorskip("torch")
     from spagent.external_experts.WildDet3D import wilddet3d_server as server
 
     calls = []
@@ -288,7 +288,7 @@ def test_wilddet3d_server_validates_direct_http_prompts():
 
 
 def test_wilddet3d_server_serializes_bfloat16_tensors():
-    import torch
+    torch = pytest.importorskip("torch")
     from spagent.external_experts.WildDet3D.wilddet3d_server import _to_numpy
 
     converted = _to_numpy(torch.tensor([0.25, 0.5], dtype=torch.bfloat16))
