@@ -32,6 +32,14 @@ def test_wilddet3d_tool_is_exported():
     assert WildDet3DTool is not None
 
 
+def test_wilddet3d_is_in_tool_selection_guide():
+    from core.prompts import build_tool_selection_guide
+
+    guide = build_tool_selection_guide({"wilddet3d_tool"})
+    assert "## 3D & Spatial" in guide
+    assert "wilddet3d_tool" in guide
+
+
 def test_wilddet3d_schema_contains_prompt_inputs():
     tool = WildDet3DTool(use_mock=True)
     params = tool.parameters
