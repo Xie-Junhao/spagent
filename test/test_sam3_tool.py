@@ -45,6 +45,14 @@ def test_sam3_schema_contains_expected_parameters():
     assert "task" in schema["properties"]
 
 
+def test_sam3_is_in_tool_selection_guide():
+    from core.prompts import build_tool_selection_guide
+
+    guide = build_tool_selection_guide({"sam3_concept_segmentation_tool"})
+    assert "## 2D Perception" in guide
+    assert "sam3_concept_segmentation_tool" in guide
+
+
 def test_sam3_mock_image_segmentation(sample_image_path):
     tool = SAM3Tool(use_mock=True)
 
