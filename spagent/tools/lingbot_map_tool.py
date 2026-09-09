@@ -61,13 +61,18 @@ class LingBotMapTool(Tool):
             "properties": {
                 "image_folder": {
                     "type": "string",
-                    "description": "Path to a folder containing at least eight ordered input images.",
+                    "description": (
+                        "Path to a folder containing at least eight ordered input images. "
+                        "Provide exactly one of image_folder or image_paths."
+                    ),
                 },
                 "image_paths": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "minItems": MIN_REAL_FRAMES,
-                    "description": "Ordered list of at least eight image paths. Use this instead of image_folder.",
+                    "description": (
+                        "Ordered list of at least eight image paths. Provide exactly one "
+                        "of image_paths or image_folder."
+                    ),
                 },
                 "mask_sky": {
                     "type": "boolean",
@@ -76,28 +81,19 @@ class LingBotMapTool(Tool):
                 },
                 "keyframe_interval": {
                     "type": "integer",
-                    "description": "Use every Nth image as a keyframe.",
+                    "description": "Use every Nth image as a keyframe; use 1 for every frame.",
                     "default": 1,
-                    "minimum": 1,
                 },
                 "max_frames": {
                     "type": "integer",
-                    "description": "Maximum number of frames to send to the backend.",
+                    "description": "Maximum number of frames to send to the backend; must be at least 8.",
                     "default": 128,
-                    "minimum": 8,
                 },
                 "output_dir": {
                     "type": "string",
                     "description": "Optional output directory for preview, trajectory, and point cloud files.",
                 },
-                "wait_for_completion": {
-                    "type": "boolean",
-                    "const": True,
-                    "description": "Wait for reconstruction and return PLY and trajectory artifacts.",
-                    "default": True,
-                },
             },
-            "oneOf": [{"required": ["image_folder"]}, {"required": ["image_paths"]}],
         }
 
     def call(

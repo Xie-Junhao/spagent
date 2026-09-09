@@ -73,9 +73,19 @@ def test_lingbot_map_schema_contains_required_inputs():
     assert "image_folder" in schema["properties"]
     assert "image_paths" in schema["properties"]
     assert "mask_sky" in schema["properties"]
-    assert "oneOf" in schema
-    assert schema["properties"]["image_paths"]["minItems"] == 8
-    assert schema["properties"]["wait_for_completion"]["const"] is True
+    assert "oneOf" not in schema
+    assert "wait_for_completion" not in schema["properties"]
+    assert "exactly one" in schema["properties"]["image_folder"]["description"]
+    assert "at least eight" in schema["properties"]["image_paths"]["description"]
+
+
+def test_lingbot_map_is_in_tool_selection_guide():
+    from core.prompts import build_tool_selection_guide
+
+    guide = build_tool_selection_guide({"lingbot_map_tool"})
+    assert "## 3D & Spatial" in guide
+    assert "lingbot_map_tool" in guide
+    assert "at least eight images" in guide
 
 
 def test_image_folder_is_normalized_in_numeric_order_for_upload(tmp_path):
@@ -432,6 +442,28 @@ def test_server_http_route_with_fake_cli(tmp_path):
     assert "log" in data
     assert data["points_count"] == 4
     assert Path(data["output_dir"]).parent == tmp_path / "server_work"
+
+
+def test_server_normalizes_jpeg_inputs_to_png(tmp_path):
+    pytest.importorskip("flask")
+    from spagent.external_experts.LingBotMap import lingbot_map_server as server
+
+    source_dir = tmp_path / "jpeg_frames"
+    source_dir.mkdir()
+    for index in range(8):
+        Image.new("RGB", (16, 12), color=(index, 20, 30)).save(
+            source_dir / f"{index:06d}.jpeg", format="JPEG"
+        )
+
+    staged = server._prepare_frame_dir(
+        image_folder=str(source_dir),
+        images=[],
+        output_dir=tmp_path / "server_work",
+        keyframe_interval=1,
+        max_frames=8,
+    )
+    staged_names = sorted(path.name for path in staged.iterdir())
+    assert staged_names == [f"{index:06d}.png" for index in range(8)]
 
 
 @pytest.mark.skipif(

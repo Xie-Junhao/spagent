@@ -1317,7 +1317,7 @@ print(result["image_paths"])
 
 **特点**：
 - 支持图片文件夹和显式图片路径列表
-- 返回非空 RGB 点云、相机轨迹、预览图和点数量
+- 完成重建后返回非空 RGB 点云、相机轨迹、预览图和点数量
 - 支持 sky masking 和 keyframe 采样
 
 **权重下载**：
@@ -1354,10 +1354,14 @@ result = tool.call(
     mask_sky=True,
     keyframe_interval=1,
     max_frames=128,
-    wait_for_completion=True,
 )
-print(result["point_cloud_path"], result["trajectory_path"], result["points_count"])
+print(result["point_cloud_path"])
+print(result["trajectory_path"])
+print(result["preview_path"])
+print(result["points_count"])
 ```
+
+必须在 `image_folder` 和 `image_paths` 中二选一，且有序序列至少包含 8 张图像。如果点云或相机轨迹文件缺失，工具会返回失败结果。
 
 **资源链接**：
 - [官方仓库](https://github.com/Robbyant/lingbot-map)

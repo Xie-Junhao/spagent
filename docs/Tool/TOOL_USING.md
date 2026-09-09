@@ -1602,7 +1602,7 @@ The default model is `qwen-image-2.0`. `image_path` and reference images may be 
 
 **Features**:
 - Supports image folders and explicit image path lists
-- Returns a non-empty RGB point cloud, camera trajectory, preview, and point count
+- Runs reconstruction to completion and returns a non-empty RGB point cloud, camera trajectory, preview, and point count
 - Supports sky masking and keyframe sampling
 
 **Weight Download**:
@@ -1639,10 +1639,14 @@ result = tool.call(
     mask_sky=True,
     keyframe_interval=1,
     max_frames=128,
-    wait_for_completion=True,
 )
-print(result["point_cloud_path"], result["trajectory_path"], result["points_count"])
+print(result["point_cloud_path"])
+print(result["trajectory_path"])
+print(result["preview_path"])
+print(result["points_count"])
 ```
+
+Provide exactly one of `image_folder` and `image_paths`; the ordered sequence must contain at least eight images. The tool reports failure if the point-cloud or trajectory artifact is missing.
 
 **Resources**:
 - [Official Repository](https://github.com/Robbyant/lingbot-map)
